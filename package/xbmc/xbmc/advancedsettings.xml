@@ -1,0 +1,14 @@
+<advancedsettings>
+  <omx>
+<!--
+    <omxhwaudiodecode>1</omxhwaudiodecode>
+    <omxdecodestartwithvalidframe>1</omxdecodestartwithvalidframe>
+-->
+  </omx>
+  <network> 
+    <cachemembuffersize>30242880</cachemembuffersize> 
+  </network>
+  <fanartheight>512</fanartheight>
+  <thumbsize>256</thumbsize>
+  <bginfoloadermaxthreads>1</bginfoloadermaxthreads> 
+</advancedsettings>

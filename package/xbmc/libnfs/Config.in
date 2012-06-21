@@ -1,0 +1,6 @@
+config BR2_PACKAGE_LIBNFS
+	bool "libnfs"
+	help
+	  nfs userspace implementation.
+
+	  http://github.com/sahlberg/libnfs

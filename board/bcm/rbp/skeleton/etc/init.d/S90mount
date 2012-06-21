@@ -1,0 +1,14 @@
+#! /bin/sh
+#
+
+case "$1" in
+	start)
+    mount -a 2>/dev/null
+    ;;
+	stop)
+		;;
+	*)
+		echo "Usage: urandom {start|stop}" >&2
+		exit 1
+		;;
+esac

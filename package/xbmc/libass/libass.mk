@@ -1,0 +1,14 @@
+#############################################################
+#
+# libass
+#
+#############################################################
+LIBASS_VERSION = 0.9.12
+LIBASS_SITE = http://libass.googlecode.com/files
+LIBASS_SOURCE = libass-$(LIBASS_VERSION).tar.gz
+LIBASS_INSTALL_STAGING = YES
+LIBASS_INSTALL_TARGET = YES
+
+LIBASS_DEPENDENCIES += host-pkg-config libenca freetype fontconfig
+
+$(eval $(call AUTOTARGETS,package/xbmc,libass))

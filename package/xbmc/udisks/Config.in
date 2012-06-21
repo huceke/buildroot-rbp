@@ -1,0 +1,11 @@
+config BR2_PACKAGE_UDISKS
+	bool "udisks"
+	depends on BR2_LARGEFILE # util-linux
+	depends on BR2_USE_WCHAR # util-linux
+	select BR2_PACKAGE_UDEV
+  select BR2_PACKAGE_SG3_UTILS
+  select BR2_PACKAGE_UDEV_ALL_EXTRAS
+	help
+	  The udisks package is a dbus storage provider.
+
+	  http://www.freedesktop.org/wiki/Software/udisks

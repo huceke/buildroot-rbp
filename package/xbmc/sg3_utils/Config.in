@@ -1,0 +1,6 @@
+config BR2_PACKAGE_SG3_UTILS
+	bool "sg3_utils"
+	help
+	  sg3_utils: a package of utilities for accessing devices that use SCSI command sets.
+
+	  http://freshmeat.net/projects/sg3_utils/

@@ -1,0 +1,97 @@
+This buildroot is for xbmc development for the Raspberry PI.
+
+The buildroot is based on upstream buildroot git : bce34ab199dea7e8430971ae31d743e246049785
+
+Requirements for ubuntu :
+
+  apt-get install build-essential libssl-dev git libncurses-dev bison flex texinfo zlib1g-dev gettext autoconf patch
+
+Getting buildroot :
+
+  mkdir /opt/xbmc-bcm
+  cd /opt/xbmc-bcm
+  export BUILDROOT=/opt/xbmc-bcm/buildroot
+  git clone https://github.com/huceke/buildroot-rbp.git buildroot
+
+Building buildroot :
+
+  cd $BUILDROOT
+
+  make rbp_defconfig
+  make
+
+Output of buildroot is located at :
+
+  $BUILDROOT/output/images/
+
+  There you find the necessary binary files and the rootfs for the PI.
+
+Prepare the nfs exports :
+
+  mkdir -p /opt/bcm-rootfs
+  mkdir -p /opt/xbmc-bcm/xbmc-bin
+  cd /opt/bcm-rootfs
+  tar -xpf $BUILDROOT/output/images/rootfs.tar
+
+  Edit etc/fstab and add the nfs mounts :
+
+  
+
+  Edit /etc/exports and add
+
+  /opt/bcm-rootfs           192.168.1.0/24(rw,no_root_squash,no_subtree_check,async)
+  /opt/xbmc-bcm/xbmc-bin    192.168.1.0/24(rw,no_root_squash,no_subtree_check,async)
+
+  Reread exports :
+
+  exportfs -r
+
+Partition a sd card with the following partitions :
+
+  1 -> FAT
+  2 -> Linux root
+  3 -> Linux swap
+
+  Copy $BUILDROOT/output/images/{bootcode.bin,cmdline.txt.example,loader.bin,start.elf} onto the FAT partition.
+  Rename cmdline.txt.example to cmdline.txt.
+
+  Edit cmdline.txt and change the settings to your needs.
+
+  otg.lpm_enable=0 console=ttyAMA0,115200 kgdboc=ttyAMA0,115200 console=tty1 nfsroot=192.168.1.2:/opt/bcm-rootfs ip=192.168.1.3:192.168.1.2:192.168.1.1:255.255.255.0 rootwait smsc95xx.macaddr=08:00:24:00:60:03 quiet
+
+  Here 192.168.1.2 is the nfs server ip address. 192.168.1.3 is the ip address of the PI. 192.168.1.1 is the DNS server.
+
+
+Getting xbmc :
+
+  cd /opt/xbmc-bcm
+  git clone https://github.com/xbmc/xbmc-rbp.git
+
+  cd /opt/xbmc-bcm/xbmc
+
+  vi tools/rbp/setup-sdk.sh
+
+  Change the buildroot location after "USE_BUILDROOT==1" case to :
+
+  BUILDROOT=/opt/xbmc-bcm/buildroot
+  
+  Run tools/rbp/setup-sdk.sh
+
+  sh tools/rbp/setup-sdk.sh
+
+  make -C tools/rbp/depends/xbmc
+  make
+  make install
+
+  Xbmc binaries and depends are install in /opt/xbmc-bcm/xbmc-bin.
+
+Buildroot hints :
+
+  User      : root
+  Password  : xbmc
+
+  If libnfs fails to build :
+  
+  rm -rf rm -rf output/build/libnfs-345422a2e32b22119054224003655468771b15fc
+  make libnfs
+  make

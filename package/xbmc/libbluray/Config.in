@@ -1,0 +1,6 @@
+config BR2_PACKAGE_LIBBLURAY
+	bool "libbluray"
+	help
+	  library for acces bluray discs
+
+	  http://github.com/sahlberg/libnfs

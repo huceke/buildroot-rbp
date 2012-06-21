@@ -1,0 +1,33 @@
+#!/bin/sh
+
+#modprobe -f vchiq > /dev/null
+
+LD_LIBRARY_PATH=/opt/vc/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH
+
+PIDFILE=/var/run/vcfiled/vcfiled
+PID=$(cat $PIDFILE 2>/dev/null)
+if ! readlink -q /proc/$PID/exe | grep -q '^/opt/vc/sbin/vcfiled'; then
+	PID=
+	rm $PIDFILE 2>/dev/null
+fi
+
+case "$1" in
+	start)
+		echo 'Starting VideoCore file server daemon'
+		[[ -z $PID ]] && /opt/vc/sbin/vcfiled 
+    /opt/vc/sbin/vcgencmd set_vll_dir /boot/vlls           
+		;;
+	stop)
+		echo 'Stopping VideoCore file server daemon'
+		[[ ! -z $PID ]] && kill $PID &> /dev/null
+		;;
+	restart)
+		$0 stop
+		sleep 1
+		$0 start
+		;;
+	*)
+		echo "usage: $0 {start|stop|restart}"
+esac
+exit 0

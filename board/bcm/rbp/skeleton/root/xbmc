@@ -1,0 +1,28 @@
+#!/bin/sh
+
+export XBMC_BASE=/opt/xbmc
+export XBMC_HOME=/opt/xbmc/share/xbmc
+export PATH=$PATH:/opt/xbmc/bin
+export HOME=/root
+
+XRES=1600
+YRES=900
+
+export SDL_AUDIODRIVER=dsp
+
+export LD_LIBRARY_PATH=$XBMC_BASE/lib
+#:/opt/vc/lib:$LD_LIBRARY_PATH
+
+#clear
+#set +v
+#tput civis
+
+echo 0 >  /sys/class/vtconsole/vtcon1/bind
+fbset -xres 1 -yres 1 -vxres 1 -vyres 1
+#gdb --args /opt/xbmc/lib/xbmc/xbmc.bin -standalone -fs "$1"
+/opt/xbmc/lib/xbmc/xbmc.bin -standalone -fs "$1"
+#gdbserver 192.168.10.9:2345 /opt/xbmc/lib/xbmc/xbmc.bin -standalone -fs "$1"
+#fbset -xres ${XRES} -yres ${YRES}
+#echo 1 >  /sys/class/vtconsole/vtcon1/bind
+
+#tput cnorm

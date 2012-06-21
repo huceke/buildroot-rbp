@@ -1,0 +1,86 @@
+diff -uNr libglib2-2.30.2.orig/gio/Makefile.am libglib2-2.30.2/gio/Makefile.am
+--- libglib2-2.30.2.orig/gio/Makefile.am	2012-05-16 12:50:43.825551145 +0200
++++ libglib2-2.30.2/gio/Makefile.am	2012-05-16 12:51:21.652298815 +0200
+@@ -276,7 +276,7 @@
+ 
+ endif
+ 
+-SUBDIRS += tests
++SUBDIRS += 
+ 
+ libgio_2_0_la_SOURCES =		\
+ 	gappinfo.c 		\
+diff -uNr libglib2-2.30.2.orig/gio/Makefile.in libglib2-2.30.2/gio/Makefile.in
+--- libglib2-2.30.2.orig/gio/Makefile.in	2012-05-16 12:50:43.832217826 +0200
++++ libglib2-2.30.2/gio/Makefile.in	2012-05-16 12:57:56.499810509 +0200
+@@ -435,7 +435,7 @@
+ am__tty_colors = \
+ red=; grn=; lgn=; blu=; std=
+ DIST_SUBDIRS = gdbus-2.0/codegen libasyncns xdgmime inotify fen win32 \
+-	. fam tests
++	. fam 
+ DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
+ am__relativize = \
+   dir0=`pwd`; \
+@@ -710,7 +710,7 @@
+ TEST_PROGS = 
+ NULL = 
+ SUBDIRS = gdbus-2.0/codegen $(am__append_1) $(am__append_3) \
+-	$(am__append_7) $(am__append_10) . $(am__append_13) tests
++	$(am__append_7) $(am__append_10) . $(am__append_13) 
+ @MS_LIB_AVAILABLE_TRUE@@OS_WIN32_AND_DLL_COMPILATION_TRUE@noinst_DATA = gio-2.0.lib
+ @MS_LIB_AVAILABLE_TRUE@@OS_WIN32_AND_DLL_COMPILATION_TRUE@install_ms_lib_cmd = $(INSTALL) gio-2.0.lib $(DESTDIR)$(libdir)
+ @MS_LIB_AVAILABLE_TRUE@@OS_WIN32_AND_DLL_COMPILATION_TRUE@uninstall_ms_lib_cmd = -rm $(DESTDIR)$(libdir)/gio-2.0.lib
+@@ -3544,9 +3544,6 @@
+ 	-rm -rf glib-lcov.info glib-lcov
+ 	-find -name '*.gcda' -print | xargs rm
+ 
+-# run tests in cwd as part of make check
+-check-local: test-nonrecursive
+-
+ install-ms-lib:
+ 	$(install_ms_lib_cmd)
+ 
+diff -uNr libglib2-2.30.2.orig/Makefile.am libglib2-2.30.2/Makefile.am
+--- libglib2-2.30.2.orig/Makefile.am	2012-05-16 12:50:43.785551060 +0200
++++ libglib2-2.30.2/Makefile.am	2012-05-16 12:57:39.619774401 +0200
+@@ -6,7 +6,7 @@
+ 
+ ACLOCAL_AMFLAGS = -I m4macros ${ACLOCAL_FLAGS}
+ 
+-SUBDIRS = . m4macros glib gmodule gthread gobject gio tests po docs
++SUBDIRS = . m4macros glib gmodule gthread gobject gio po docs
+ DIST_SUBDIRS = $(SUBDIRS) build
+ 
+ bin_SCRIPTS = glib-gettextize
+diff -uNr libglib2-2.30.2.orig/Makefile.decl libglib2-2.30.2/Makefile.decl
+--- libglib2-2.30.2.orig/Makefile.decl	2012-05-16 12:50:43.792217740 +0200
++++ libglib2-2.30.2/Makefile.decl	2012-05-16 12:57:45.949787943 +0200
+@@ -93,5 +93,3 @@
+ 	-rm -rf glib-lcov.info glib-lcov
+ 	-find -name '*.gcda' -print | xargs rm
+ 
+-# run tests in cwd as part of make check
+-check-local: test-nonrecursive
+diff -uNr libglib2-2.30.2.orig/Makefile.in libglib2-2.30.2/Makefile.in
+--- libglib2-2.30.2.orig/Makefile.in	2012-05-16 12:50:43.808884441 +0200
++++ libglib2-2.30.2/Makefile.in	2012-05-16 12:57:36.026433384 +0200
+@@ -431,7 +431,7 @@
+ 	gio-2.0-uninstalled.pc.in gio-unix-2.0-uninstalled.pc.in
+ TEST_PROGS = 
+ ACLOCAL_AMFLAGS = -I m4macros ${ACLOCAL_FLAGS}
+-SUBDIRS = . m4macros glib gmodule gthread gobject gio tests po docs
++SUBDIRS = . m4macros glib gmodule gthread gobject gio po docs
+ DIST_SUBDIRS = $(SUBDIRS) build
+ bin_SCRIPTS = glib-gettextize
+ AM_CPPFLAGS = \
+@@ -1181,9 +1181,6 @@
+ 	-rm -rf glib-lcov.info glib-lcov
+ 	-find -name '*.gcda' -print | xargs rm
+ 
+-# run tests in cwd as part of make check
+-check-local: test-nonrecursive
+-
+ # http://people.gnome.org/~walters/docs/build-api.txt
+ .buildapi-allow-builddir:
+ 
