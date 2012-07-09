@@ -16,7 +16,7 @@ case "$1" in
 	start)
 		echo 'Starting VideoCore file server daemon'
 		[[ -z $PID ]] && /opt/vc/sbin/vcfiled 
-    /opt/vc/sbin/vcgencmd set_vll_dir /boot/vlls           
+    /opt/vc/bin/vcgencmd set_vll_dir /boot/vlls           
 		;;
 	stop)
 		echo 'Stopping VideoCore file server daemon'
