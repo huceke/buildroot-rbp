@@ -8,7 +8,7 @@ export HOME=/root
 XRES=1920
 YRES=1080
 
-export LD_LIBRARY_PATH=$XBMC_BASE/lib:/opt/vc/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$XBMC_BASE/lib:/opt/vc/lib:/usr/lib/mysql:$LD_LIBRARY_PATH
 
 case "$1" in
 	start)

@@ -1,0 +1,7 @@
+config BR2_PACKAGE_LIBCEC
+	depends on BR2_PACKAGE_LOCKDEV
+	bool "libcec"
+	help
+	  hdmi cec library.
+
+	  https://github.com/Pulse-Eight/libcec
