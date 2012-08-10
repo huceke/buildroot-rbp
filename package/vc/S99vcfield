@@ -2,6 +2,8 @@
 
 #modprobe -f vchiq > /dev/null
 
+exit 0
+
 LD_LIBRARY_PATH=/opt/vc/lib:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH
 
