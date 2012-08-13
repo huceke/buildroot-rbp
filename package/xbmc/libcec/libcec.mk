@@ -9,8 +9,8 @@ LIBCEC_INSTALL_STAGING = YES
 LIBCEC_INSTALL_TARGET = YES
 LIBCEC_AUTORECONF = YES
 LIBCEC_CONF_OPT = --enable-rpi \
-									--with-rpi-include-path=$(TARGET_DIR)/opt/vc/include \
-									--with-rpi-lib-path=$(TARGET_DIR)/opt/vc/lib
+									--with-rpi-include-path=$(STAGING_DIR)/opt/vc/include \
+									--with-rpi-lib-path=$(STAGING_DIR)/opt/vc/lib
 LIBCEC_DEPENDENCIES = lockdev
 
 $(eval $(call AUTOTARGETS))
