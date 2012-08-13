@@ -16,7 +16,6 @@ source "package/xbmc/libshairport/Config.in"
 source "package/xbmc/libssh2/Config.in"
 source "package/xbmc/sg3_utils/Config.in"
 source "package/xbmc/tinyxml/Config.in"
-source "package/xbmc/tinyxml2/Config.in"
 source "package/xbmc/udisks/Config.in"
 source "package/xbmc/xbmc/Config.in"
 endmenu
