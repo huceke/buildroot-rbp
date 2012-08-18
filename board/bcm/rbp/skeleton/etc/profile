@@ -6,7 +6,8 @@ export PATH=\
 /usr/bin:\
 /usr/sbin:\
 /usr/bin/X11:\
-/usr/local/bin
+/usr/local/bin:\
+/opt/vc/bin
 
 # If running interactively, then:
 if [ "$PS1" ]; then
@@ -55,3 +56,5 @@ for i in /etc/profile.d/*.sh ; do
 done
 
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/var/run/dbus/system_bus_socket"
+
+export LD_LIBRARY_PATH="/opt/vc/lib:/usr/lib/mysql:$LD_LIBRARY_PATH"
