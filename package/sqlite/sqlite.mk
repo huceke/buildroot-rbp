@@ -4,7 +4,7 @@
 #
 #############################################################
 
-SQLITE_VERSION = 3071100
+SQLITE_VERSION = 3071300
 SQLITE_SOURCE = sqlite-autoconf-$(SQLITE_VERSION).tar.gz
 SQLITE_SITE = http://www.sqlite.org
 SQLITE_INSTALL_STAGING = YES
@@ -19,6 +19,8 @@ endif
 ifeq ($(BR2_PACKAGE_SQLITE_STAT3),y)
 SQLITE_CFLAGS += -DSQLITE_ENABLE_STAT3
 endif
+
+SQLITE_CFLAGS += -DSQLITE_RTREE_INT_ONLY
 
 SQLITE_CONF_ENV = CFLAGS="$(TARGET_CFLAGS) $(SQLITE_CFLAGS)"
 
