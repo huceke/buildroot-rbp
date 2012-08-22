@@ -5840,10 +5840,10 @@ index 0000000..9d41c3a
 +
 diff --git a/arch/arm/mach-bcm2708/include/mach/vcio.h b/arch/arm/mach-bcm2708/include/mach/vcio.h
 new file mode 100644
-index 0000000..0d7f9a5
+index 0000000..ace4ea4
 --- /dev/null
 +++ b/arch/arm/mach-bcm2708/include/mach/vcio.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,43 @@
 +/*
 + *  arch/arm/mach-bcm2708/include/mach/vcio.h
 + *
@@ -5880,7 +5880,8 @@ index 0000000..0d7f9a5
 +#define MBOX_CHAN_LEDS    4 /* for use by the leds interface */
 +#define MBOX_CHAN_BUTTONS 5 /* for use by the buttons interface */
 +#define MBOX_CHAN_TOUCH   6 /* for use by the touchscreen interface */
-+#define MBOX_CHAN_COUNT   7
++#define MBOX_CHAN_PROPERTY 8 /* for use by the property channel */
++#define MBOX_CHAN_COUNT   9
 +
 +extern int /*rc*/ bcm_mailbox_read(unsigned chan, uint32_t *data28);
 +extern int /*rc*/ bcm_mailbox_write(unsigned chan, uint32_t data28);
@@ -5888,7 +5889,7 @@ index 0000000..0d7f9a5
 +#endif
 diff --git a/arch/arm/mach-bcm2708/include/mach/vmalloc.h b/arch/arm/mach-bcm2708/include/mach/vmalloc.h
 new file mode 100644
-index 0000000..28ecc15
+index 0000000..502c617
 --- /dev/null
 +++ b/arch/arm/mach-bcm2708/include/mach/vmalloc.h
 @@ -0,0 +1,20 @@
@@ -5911,7 +5912,7 @@ index 0000000..28ecc15
 + * along with this program; if not, write to the Free Software
 + * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 + */
-+#define VMALLOC_END		(0xd8000000)
++#define VMALLOC_END		(0xe8000000)
 diff --git a/arch/arm/mach-bcm2708/power.c b/arch/arm/mach-bcm2708/power.c
 new file mode 100644
 index 0000000..256bf1a
@@ -6114,10 +6115,10 @@ index 0000000..256bf1a
 +MODULE_LICENSE("GPL");
 diff --git a/arch/arm/mach-bcm2708/vc_mem.c b/arch/arm/mach-bcm2708/vc_mem.c
 new file mode 100644
-index 0000000..67c10ee
+index 0000000..775c213
 --- /dev/null
 +++ b/arch/arm/mach-bcm2708/vc_mem.c
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,510 @@
 +/*****************************************************************************
 +* Copyright 2010 - 2011 Broadcom Corporation.  All rights reserved.
 +*
@@ -6141,6 +6142,7 @@ index 0000000..67c10ee
 +#include <linux/slab.h>
 +#include <linux/proc_fs.h>
 +#include <asm/uaccess.h>
++#include <linux/dma-mapping.h>
 +
 +#ifdef CONFIG_ARCH_KONA
 +#include <chal/chal_ipc.h>
@@ -6150,12 +6152,12 @@ index 0000000..67c10ee
 +#endif
 +
 +#include "mach/vc_mem.h"
-+//#include "interface/vchiq_arm/vchiq_connected.h"
++#include <mach/vcio.h>
 +
 +#define DRIVER_NAME  "vc-mem"
 +
 +// Uncomment to enable debug logging
-+//#define ENABLE_DBG
++#define ENABLE_DBG
 +
 +#if defined(ENABLE_DBG)
 +#define LOG_DBG( fmt, ... )  printk( KERN_INFO fmt "\n", ##__VA_ARGS__ )
@@ -6187,23 +6189,8 @@ index 0000000..67c10ee
 + * bootloader (and/or kernel). When that happens, the values of these variables
 + * would be calculated and assigned in the init function.
 + */
-+#ifdef CONFIG_ARCH_KONA
-+
-+#include <mach/io_map.h>
-+unsigned long mm_vc_mem_phys_addr = VC_EMI;
-+
-+#elif CONFIG_ARCH_BCM2708
-+
 +// in the 2835 VC in mapped above ARM, but ARM has full access to VC space
 +unsigned long mm_vc_mem_phys_addr = 0x00000000;
-+
-+#else
-+
-+#include <mach/csp/mm_io.h>
-+unsigned long mm_vc_mem_phys_addr = MM_ADDR_IO_VC_EMI;
-+
-+#endif
-+
 +unsigned int mm_vc_mem_size = 0;
 +unsigned int mm_vc_mem_base = 0;
 +
@@ -6245,6 +6232,64 @@ index 0000000..67c10ee
 +	return 0;
 +}
 +
++
++/* tag part of the message */
++struct vc_msg_tag {
++	uint32_t tag_id;		/* the message id */
++	uint32_t buffer_size;	/* size of the buffer (which in this case is always 8 bytes) */
++	uint32_t data_size;		/* amount of data being sent or received */
++	uint32_t base;		/* the address of memory base */
++	uint32_t size;			/* the size of memory in bytes */
++};
++
++struct vc_set_msg {
++	uint32_t msg_size;			/* simply, sizeof(struct vc_msg) */
++	uint32_t request_code;		/* holds various information like the success and number of bytes returned (refer to mailboxes wiki) */
++	struct vc_msg_tag tag[2];	/* the array of tag structures above to make */
++	uint32_t end_tag;			/* an end identifier, should be set to NULL */
++};
++
++#define VCMSG_GET_ARM_MEMORY 0x00010005
++#define VCMSG_GET_VC_MEMORY  0x00010006
++
++static void vc_mem_update(void)
++{
++	uint32_t success;
++	dma_addr_t vc_mem;						/* the memory address accessed from videocore */
++	struct vc_set_msg *get_mem;					/* the memory address accessed from driver */
++
++	/* allocate some memory for the messages to use throughout the lifetime of the driver, use the larger of the two message structures */
++	get_mem = (struct vc_set_msg *)dma_alloc_coherent(NULL, PAGE_ALIGN(sizeof(struct vc_set_msg)), &vc_mem, GFP_ATOMIC); 
++	/* clear any garbage */
++	memset(get_mem, 0, sizeof(struct vc_set_msg));
++	/* create the message */
++	get_mem->msg_size = sizeof(struct vc_set_msg);
++	get_mem->tag[0].tag_id = VCMSG_GET_VC_MEMORY;
++	get_mem->tag[0].buffer_size = 8;
++	get_mem->tag[0].data_size   = 0;
++	get_mem->tag[1].tag_id = VCMSG_GET_ARM_MEMORY;
++	get_mem->tag[1].buffer_size = 8;
++	get_mem->tag[1].data_size   = 0;
++
++	/* send the message */
++	wmb();
++	bcm_mailbox_write(MBOX_CHAN_PROPERTY,(uint32_t)vc_mem);
++	bcm_mailbox_read(MBOX_CHAN_PROPERTY, &success);
++	rmb();
++
++	LOG_DBG("%s: resp %x, vcbase=%x vcsize=%x armbase=%x armsize=%x", __func__, get_mem->request_code, 
++		get_mem->tag[0].base, get_mem->tag[0].size, get_mem->tag[1].base, get_mem->tag[1].size);
++
++	/* check we're all good */
++	if (get_mem->request_code & 0x80000000) {
++		mm_vc_mem_base = get_mem->tag[0].base;
++		mm_vc_mem_size = get_mem->tag[0].size+get_mem->tag[1].size;
++		mm_vc_mem_phys_addr = get_mem->tag[1].base;
++	}
++	dma_free_coherent(NULL, PAGE_ALIGN(sizeof(struct vc_set_msg)), (void *)get_mem, vc_mem);
++}
++
++
 +/****************************************************************************
 +*
 +*   vc_mem_get_size
@@ -6254,7 +6299,7 @@ index 0000000..67c10ee
 +static void
 +vc_mem_get_size(void)
 +{
-+	mm_vc_mem_size = 256 * 1024 * 1024;	// Static for now
++	vc_mem_update();
 +}
 +
 +/****************************************************************************
@@ -6266,7 +6311,7 @@ index 0000000..67c10ee
 +static void
 +vc_mem_get_base(void)
 +{
-+	mm_vc_mem_base = 128 * 1024 * 1024;	// Static for now
++	vc_mem_update();
 +}
 +
 +/****************************************************************************
@@ -30623,30 +30668,6 @@ index 0000000..ef8fef0
 +MODULE_AUTHOR("Chris Boot <bootc@bootc.net>");
 +MODULE_LICENSE("GPL v2");
 +MODULE_ALIAS("platform:" DRV_NAME);
-diff --git a/drivers/tty/serial/amba-pl011.c b/drivers/tty/serial/amba-pl011.c
-index 6da8cf8..1b60985 100644
---- a/drivers/tty/serial/amba-pl011.c
-+++ b/drivers/tty/serial/amba-pl011.c
-@@ -1394,6 +1394,11 @@ static int pl011_startup(struct uart_port *port)
- 	writew(uap->vendor->ifls, uap->port.membase + UART011_IFLS);
- 
- 	/*
-+	 * The write to UART01x_DR causes a corrupted character to be sent
-+	 * - why is it required?
-+	 */
-+#if 0
-+	/*
- 	 * Provoke TX FIFO interrupt into asserting.
- 	 */
- 	cr = UART01x_CR_UARTEN | UART011_CR_TXE | UART011_CR_LBE;
-@@ -1414,6 +1419,7 @@ static int pl011_startup(struct uart_port *port)
- 	writew(0, uap->port.membase + UART01x_DR);
- 	while (readw(uap->port.membase + UART01x_FR) & UART01x_FR_BUSY)
- 		barrier();
-+#endif
- 
- 	cr = UART01x_CR_UARTEN | UART011_CR_RXE | UART011_CR_TXE;
- 	writew(cr, uap->port.membase + UART011_CR);
 diff --git a/drivers/usb/Makefile b/drivers/usb/Makefile
 index 75eca76..a6b7e41 100644
 --- a/drivers/usb/Makefile
@@ -31308,7 +31329,7 @@ index 7ca290f..802dda6 100644
  obj-$(CONFIG_USB_FSL_MPH_DR_OF)	+= fsl-mph-dr-of.o
  obj-$(CONFIG_USB_OCTEON2_COMMON) += octeon2-common.o
 diff --git a/drivers/usb/host/dwc_common_port/Makefile b/drivers/usb/host/dwc_common_port/Makefile
-new file mode 100755
+new file mode 100644
 index 0000000..203c7ea
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/Makefile
@@ -31372,7 +31393,7 @@ index 0000000..203c7ea
 +clean:
 +	rm -rf *.o *.ko .*.cmd *.mod.c .*.o.d .*.o.tmp modules.order Module.markers Module.symvers .tmp_versions/
 diff --git a/drivers/usb/host/dwc_common_port/Makefile.fbsd b/drivers/usb/host/dwc_common_port/Makefile.fbsd
-new file mode 100755
+new file mode 100644
 index 0000000..45db991
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/Makefile.fbsd
@@ -31395,7 +31416,7 @@ index 0000000..45db991
 +
 +.include <bsd.kmod.mk>
 diff --git a/drivers/usb/host/dwc_common_port/Makefile.linux b/drivers/usb/host/dwc_common_port/Makefile.linux
-new file mode 100755
+new file mode 100644
 index 0000000..961df3f
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/Makefile.linux
@@ -31450,7 +31471,7 @@ index 0000000..961df3f
 +clean:
 +	rm -rf *.o *.ko .*.cmd *.mod.c .*.o.d .*.o.tmp modules.order Module.markers Module.symvers .tmp_versions/
 diff --git a/drivers/usb/host/dwc_common_port/changes.txt b/drivers/usb/host/dwc_common_port/changes.txt
-new file mode 100755
+new file mode 100644
 index 0000000..6740702
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/changes.txt
@@ -31630,7 +31651,7 @@ index 0000000..6740702
 +module code in dwc_common_linux.c is not compiled in. This allows linking the
 +library code directly into a driver module, instead of as a standalone module.
 diff --git a/drivers/usb/host/dwc_common_port/doc/doxygen.cfg b/drivers/usb/host/dwc_common_port/doc/doxygen.cfg
-new file mode 100755
+new file mode 100644
 index 0000000..605b9da
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/doc/doxygen.cfg
@@ -31906,7 +31927,7 @@ index 0000000..605b9da
 +#---------------------------------------------------------------------------
 +SEARCHENGINE           = NO
 diff --git a/drivers/usb/host/dwc_common_port/dwc_cc.c b/drivers/usb/host/dwc_common_port/dwc_cc.c
-new file mode 100755
+new file mode 100644
 index 0000000..613c901
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_cc.c
@@ -32444,7 +32465,7 @@ index 0000000..613c901
 +
 +#endif	/* DWC_CCLIB */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_cc.h b/drivers/usb/host/dwc_common_port/dwc_cc.h
-new file mode 100755
+new file mode 100644
 index 0000000..6b2bbaf
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_cc.h
@@ -32675,7 +32696,7 @@ index 0000000..6b2bbaf
 +#endif /* _DWC_CC_H_ */
 +
 diff --git a/drivers/usb/host/dwc_common_port/dwc_common_fbsd.c b/drivers/usb/host/dwc_common_port/dwc_common_fbsd.c
-new file mode 100755
+new file mode 100644
 index 0000000..6dd04b5
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_common_fbsd.c
@@ -33989,7 +34010,7 @@ index 0000000..6dd04b5
 +	return wq->pending;
 +}
 diff --git a/drivers/usb/host/dwc_common_port/dwc_common_linux.c b/drivers/usb/host/dwc_common_port/dwc_common_linux.c
-new file mode 100755
+new file mode 100644
 index 0000000..f00a9ff
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_common_linux.c
@@ -35416,7 +35437,7 @@ index 0000000..f00a9ff
 +
 +#endif	/* DWC_LIBMODULE */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_common_nbsd.c b/drivers/usb/host/dwc_common_port/dwc_common_nbsd.c
-new file mode 100755
+new file mode 100644
 index 0000000..49b07e1
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_common_nbsd.c
@@ -36697,7 +36718,7 @@ index 0000000..49b07e1
 +	return wq->pending;
 +}
 diff --git a/drivers/usb/host/dwc_common_port/dwc_crypto.c b/drivers/usb/host/dwc_common_port/dwc_crypto.c
-new file mode 100755
+new file mode 100644
 index 0000000..3b03532
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_crypto.c
@@ -37011,7 +37032,7 @@ index 0000000..3b03532
 +
 +#endif	/* DWC_CRYPTOLIB */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_crypto.h b/drivers/usb/host/dwc_common_port/dwc_crypto.h
-new file mode 100755
+new file mode 100644
 index 0000000..26fcddc
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_crypto.h
@@ -37128,7 +37149,7 @@ index 0000000..26fcddc
 +
 +#endif /* _DWC_CRYPTO_H_ */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_dh.c b/drivers/usb/host/dwc_common_port/dwc_dh.c
-new file mode 100755
+new file mode 100644
 index 0000000..997f753
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_dh.c
@@ -37425,7 +37446,7 @@ index 0000000..997f753
 +
 +#endif /* DWC_CRYPTOLIB */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_dh.h b/drivers/usb/host/dwc_common_port/dwc_dh.h
-new file mode 100755
+new file mode 100644
 index 0000000..25c1cc0
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_dh.h
@@ -37537,7 +37558,7 @@ index 0000000..25c1cc0
 +
 +#endif /* _DWC_DH_H_ */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_list.h b/drivers/usb/host/dwc_common_port/dwc_list.h
-new file mode 100755
+new file mode 100644
 index 0000000..89cc325
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_list.h
@@ -38137,7 +38158,7 @@ index 0000000..89cc325
 +
 +#endif /* _DWC_LIST_H_ */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_mem.c b/drivers/usb/host/dwc_common_port/dwc_mem.c
-new file mode 100755
+new file mode 100644
 index 0000000..ad645ff
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_mem.c
@@ -38388,7 +38409,7 @@ index 0000000..ad645ff
 +
 +#endif /* DWC_DEBUG_MEMORY */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_modpow.c b/drivers/usb/host/dwc_common_port/dwc_modpow.c
-new file mode 100755
+new file mode 100644
 index 0000000..b7c456b
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_modpow.c
@@ -39030,7 +39051,7 @@ index 0000000..b7c456b
 +
 +#endif /*DWC_CRYPTOLIB */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_modpow.h b/drivers/usb/host/dwc_common_port/dwc_modpow.h
-new file mode 100755
+new file mode 100644
 index 0000000..64f00c2
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_modpow.h
@@ -39070,7 +39091,7 @@ index 0000000..64f00c2
 +
 +#endif /* _LINUX_BIGNUM_H */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_notifier.c b/drivers/usb/host/dwc_common_port/dwc_notifier.c
-new file mode 100755
+new file mode 100644
 index 0000000..8b3772a
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_notifier.c
@@ -39395,7 +39416,7 @@ index 0000000..8b3772a
 +
 +#endif	/* DWC_NOTIFYLIB */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_notifier.h b/drivers/usb/host/dwc_common_port/dwc_notifier.h
-new file mode 100755
+new file mode 100644
 index 0000000..4a8cdfe
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_notifier.h
@@ -39523,7 +39544,7 @@ index 0000000..4a8cdfe
 +
 +#endif /* __DWC_NOTIFIER_H__ */
 diff --git a/drivers/usb/host/dwc_common_port/dwc_os.h b/drivers/usb/host/dwc_common_port/dwc_os.h
-new file mode 100755
+new file mode 100644
 index 0000000..308ddd5
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/dwc_os.h
@@ -40789,7 +40810,7 @@ index 0000000..308ddd5
 +
 +#endif /* _DWC_OS_H_ */
 diff --git a/drivers/usb/host/dwc_common_port/usb.h b/drivers/usb/host/dwc_common_port/usb.h
-new file mode 100755
+new file mode 100644
 index 0000000..27bda82
 --- /dev/null
 +++ b/drivers/usb/host/dwc_common_port/usb.h
@@ -41741,7 +41762,7 @@ index 0000000..27bda82
 +
 +#endif /* _USB_H_ */
 diff --git a/drivers/usb/host/dwc_otg/Makefile b/drivers/usb/host/dwc_otg/Makefile
-new file mode 100755
+new file mode 100644
 index 0000000..c4c6e4e
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/Makefile
@@ -41827,8 +41848,8 @@ index 0000000..c4c6e4e
 +
 +endif
 diff --git a/drivers/usb/host/dwc_otg/doc/doxygen.cfg b/drivers/usb/host/dwc_otg/doc/doxygen.cfg
-new file mode 100755
-index 0000000..2646c88
+new file mode 100644
+index 0000000..537c676
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/doc/doxygen.cfg
 @@ -0,0 +1,224 @@
@@ -41838,7 +41859,7 @@ index 0000000..2646c88
 +# Project related configuration options
 +#---------------------------------------------------------------------------
 +PROJECT_NAME           = "DesignWare USB 2.0 OTG Controller (DWC_otg) Device Driver"
-+PROJECT_NUMBER         = v2.94a
++PROJECT_NUMBER         = v3.00a
 +OUTPUT_DIRECTORY       = ./doc/
 +CREATE_SUBDIRS         = NO
 +OUTPUT_LANGUAGE        = English
@@ -43638,7 +43659,7 @@ index 0000000..530ac8b
 +}
 +module_exit (cleanup);
 diff --git a/drivers/usb/host/dwc_otg/dwc_cfi_common.h b/drivers/usb/host/dwc_otg/dwc_cfi_common.h
-new file mode 100755
+new file mode 100644
 index 0000000..be56af4
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_cfi_common.h
@@ -43786,7 +43807,7 @@ index 0000000..be56af4
 +
 +#endif
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_adp.c b/drivers/usb/host/dwc_otg/dwc_otg_adp.c
-new file mode 100755
+new file mode 100644
 index 0000000..0877472
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_adp.c
@@ -44646,7 +44667,7 @@ index 0000000..0877472
 +	return 1;
 +}
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_adp.h b/drivers/usb/host/dwc_otg/dwc_otg_adp.h
-new file mode 100755
+new file mode 100644
 index 0000000..d8c3f85
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_adp.h
@@ -44732,7 +44753,7 @@ index 0000000..d8c3f85
 +
 +#endif //__DWC_OTG_ADP_H__
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_attr.c b/drivers/usb/host/dwc_otg/dwc_otg_attr.c
-new file mode 100755
+new file mode 100644
 index 0000000..95eb7f8
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_attr.c
@@ -45948,7 +45969,7 @@ index 0000000..95eb7f8
 +#endif
 +}
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_attr.h b/drivers/usb/host/dwc_otg/dwc_otg_attr.h
-new file mode 100755
+new file mode 100644
 index 0000000..fc14d94
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_attr.h
@@ -46043,7 +46064,7 @@ index 0000000..fc14d94
 +    );
 +#endif
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_cfi.c b/drivers/usb/host/dwc_otg/dwc_otg_cfi.c
-new file mode 100755
+new file mode 100644
 index 0000000..a9878d6
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_cfi.c
@@ -47925,7 +47946,7 @@ index 0000000..a9878d6
 +
 +#endif //DWC_UTE_CFI
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_cfi.h b/drivers/usb/host/dwc_otg/dwc_otg_cfi.h
-new file mode 100755
+new file mode 100644
 index 0000000..cbccdab
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_cfi.h
@@ -48251,16 +48272,16 @@ index 0000000..cbccdab
 +
 +#endif /* (__DWC_OTG_CFI_H__) */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_cil.c b/drivers/usb/host/dwc_otg/dwc_otg_cil.c
-new file mode 100755
-index 0000000..83545c0
+new file mode 100644
+index 0000000..9b67537
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_cil.c
-@@ -0,0 +1,7080 @@
+@@ -0,0 +1,7151 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_cil.c $
-+ * $Revision: #189 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871160 $
++ * $Revision: #191 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -48542,11 +48563,18 @@ index 0000000..83545c0
 + */
 +void dwc_otg_cil_remove(dwc_otg_core_if_t * core_if)
 +{
++	dctl_data_t dctl = {.d32 = 0 };
 +	DWC_DEBUGPL(DBG_CILV, "%s(%p)\n", __func__, core_if);
 +
 +	/* Disable all interrupts */
 +	DWC_MODIFY_REG32(&core_if->core_global_regs->gahbcfg, 1, 0);
 +	DWC_WRITE_REG32(&core_if->core_global_regs->gintmsk, 0);
++
++	dctl.b.sftdiscon = 1;
++	if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++		DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->dctl, 0,
++				 dctl.d32);
++	}
 +
 +	if (core_if->wq_otg) {
 +		DWC_WORKQ_WAIT_WORK_DONE(core_if->wq_otg, 500);
@@ -49200,9 +49228,9 @@ index 0000000..83545c0
 +		return -DWC_E_INVALID;
 +	}
 +
-+	if (!rem_wakeup)
-+	{
-+		DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->dctl, dr->dctl);
++	if (!rem_wakeup) {
++		DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->dctl,
++				dr->dctl);
 +	}
 +	
 +	DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->daintmsk, dr->daintmsk);
@@ -49210,9 +49238,9 @@ index 0000000..83545c0
 +	DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->doepmsk, dr->doepmsk);
 +
 +	for (i = 0; i < core_if->dev_if->num_in_eps; ++i) {
-+		DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[i]->diepctl, dr->diepctl[i]);
 +		DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[i]->dieptsiz, dr->dieptsiz[i]);
 +		DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[i]->diepdma, dr->diepdma[i]);
++		DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[i]->diepctl, dr->diepctl[i]);
 +	}
 +	
 +	return 0;
@@ -50046,58 +50074,60 @@ index 0000000..83545c0
 +
 +				txfifosize.b.startaddr += txfifosize.b.depth;
 +			}
-+		        /* Calculating DFIFOCFG for Device mode to include RxFIFO and NPTXFIFO */
-+			gdfifocfg.d32 = DWC_READ_REG32(&global_regs->gdfifocfg);
-+			hwcfg3.d32 = DWC_READ_REG32(&global_regs->ghwcfg3);
-+			gdfifocfg.b.gdfifocfg = (DWC_READ_REG32(&global_regs->ghwcfg3) >> 16);
-+			DWC_WRITE_REG32(&global_regs->gdfifocfg, gdfifocfg.d32);
-+			rxfsiz = (DWC_READ_REG32(&global_regs->grxfsiz) & 0x0000ffff);
-+			nptxfsiz = (DWC_READ_REG32(&global_regs->gnptxfsiz) >> 16);
-+			gdfifocfg.b.epinfobase = rxfsiz + nptxfsiz;
-+			DWC_WRITE_REG32(&global_regs->gdfifocfg, gdfifocfg.d32);
++			if (core_if->snpsid <= OTG_CORE_REV_2_94a) {
++				/* Calculating DFIFOCFG for Device mode to include RxFIFO and NPTXFIFO */
++				gdfifocfg.d32 = DWC_READ_REG32(&global_regs->gdfifocfg);
++				hwcfg3.d32 = DWC_READ_REG32(&global_regs->ghwcfg3);
++				gdfifocfg.b.gdfifocfg = (DWC_READ_REG32(&global_regs->ghwcfg3) >> 16);
++				DWC_WRITE_REG32(&global_regs->gdfifocfg, gdfifocfg.d32);
++				rxfsiz = (DWC_READ_REG32(&global_regs->grxfsiz) & 0x0000ffff);
++				nptxfsiz = (DWC_READ_REG32(&global_regs->gnptxfsiz) >> 16);
++				gdfifocfg.b.epinfobase = rxfsiz + nptxfsiz;
++				DWC_WRITE_REG32(&global_regs->gdfifocfg, gdfifocfg.d32);
++			}
 +		}
-+	}
 +
-+	/* Flush the FIFOs */
-+	dwc_otg_flush_tx_fifo(core_if, 0x10);	/* all Tx FIFOs */
-+	dwc_otg_flush_rx_fifo(core_if);
++		/* Flush the FIFOs */
++		dwc_otg_flush_tx_fifo(core_if, 0x10);	/* all Tx FIFOs */
++		dwc_otg_flush_rx_fifo(core_if);
 +
-+	/* Flush the Learning Queue. */
-+	resetctl.b.intknqflsh = 1;
-+	DWC_WRITE_REG32(&core_if->core_global_regs->grstctl, resetctl.d32);
++		/* Flush the Learning Queue. */
++		resetctl.b.intknqflsh = 1;
++		DWC_WRITE_REG32(&core_if->core_global_regs->grstctl, resetctl.d32);
 +
-+	if (!core_if->core_params->en_multiple_tx_fifo && core_if->dma_enable) {
-+		core_if->start_predict = 0;
-+		for (i = 0; i<= core_if->dev_if->num_in_eps; ++i) {
-+			core_if->nextep_seq[i] = 0xff;	// 0xff - EP not active
-+		}
-+		core_if->nextep_seq[0] = 0;	
-+		core_if->first_in_nextep_seq = 0;
-+		diepctl.d32 = DWC_READ_REG32(&dev_if->in_ep_regs[0]->diepctl);
-+		diepctl.b.nextep = 0;
-+		DWC_WRITE_REG32(&dev_if->in_ep_regs[0]->diepctl, diepctl.d32);
++		if (!core_if->core_params->en_multiple_tx_fifo && core_if->dma_enable) {
++			core_if->start_predict = 0;
++			for (i = 0; i<= core_if->dev_if->num_in_eps; ++i) {
++				core_if->nextep_seq[i] = 0xff;	// 0xff - EP not active
++			}
++			core_if->nextep_seq[0] = 0;
++			core_if->first_in_nextep_seq = 0;
++			diepctl.d32 = DWC_READ_REG32(&dev_if->in_ep_regs[0]->diepctl);
++			diepctl.b.nextep = 0;
++			DWC_WRITE_REG32(&dev_if->in_ep_regs[0]->diepctl, diepctl.d32);
 +		
-+		/* Update IN Endpoint Mismatch Count by active IN NP EP count + 1 */
-+		dcfg.d32 = DWC_READ_REG32(&dev_if->dev_global_regs->dcfg);
-+		dcfg.b.epmscnt = 2;
-+		DWC_WRITE_REG32(&dev_if->dev_global_regs->dcfg, dcfg.d32);
++			/* Update IN Endpoint Mismatch Count by active IN NP EP count + 1 */
++			dcfg.d32 = DWC_READ_REG32(&dev_if->dev_global_regs->dcfg);
++			dcfg.b.epmscnt = 2;
++			DWC_WRITE_REG32(&dev_if->dev_global_regs->dcfg, dcfg.d32);
 +
-+		DWC_DEBUGPL(DBG_CILV,"%s first_in_nextep_seq= %2d; nextep_seq[]:\n", 
-+			__func__, core_if->first_in_nextep_seq);
-+		for (i=0; i <= core_if->dev_if->num_in_eps; i++) {
-+			DWC_DEBUGPL(DBG_CILV, "%2d ", core_if->nextep_seq[i]);
++			DWC_DEBUGPL(DBG_CILV,"%s first_in_nextep_seq= %2d; nextep_seq[]:\n",
++				__func__, core_if->first_in_nextep_seq);
++			for (i=0; i <= core_if->dev_if->num_in_eps; i++) {
++				DWC_DEBUGPL(DBG_CILV, "%2d ", core_if->nextep_seq[i]);
++			}
++			DWC_DEBUGPL(DBG_CILV,"\n");
 +		}
-+		DWC_DEBUGPL(DBG_CILV,"\n");
-+	}
 +	
-+	/* Clear all pending Device Interrupts */
-+	/** @todo - if the condition needed to be checked
-+	 *  or in any case all pending interrutps should be cleared?
-+     */
-+	if (core_if->multiproc_int_enable) {
-+		for (i = 0; i < core_if->dev_if->num_in_eps; ++i) {
-+			DWC_WRITE_REG32(&dev_if->
-+					dev_global_regs->diepeachintmsk[i], 0);
++		/* Clear all pending Device Interrupts */
++		/** @todo - if the condition needed to be checked
++		 *  or in any case all pending interrutps should be cleared?
++	     */
++		if (core_if->multiproc_int_enable) {
++			for (i = 0; i < core_if->dev_if->num_in_eps; ++i) {
++				DWC_WRITE_REG32(&dev_if->
++						dev_global_regs->diepeachintmsk[i], 0);
++			}
 +		}
 +
 +		for (i = 0; i < core_if->dev_if->num_out_eps; ++i) {
@@ -50136,9 +50166,35 @@ index 0000000..83545c0
 +		depctl_data_t depctl;
 +		depctl.d32 = DWC_READ_REG32(&dev_if->out_ep_regs[i]->doepctl);
 +		if (depctl.b.epena) {
++			dctl_data_t dctl = {.d32 = 0 };
++			gintmsk_data_t gintsts = {.d32 = 0 };
++			doepint_data_t doepint = {.d32 = 0 };
++			dctl.b.sgoutnak = 1;
++			DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->dctl, 0, dctl.d32);
++			do {
++				dwc_udelay(10);
++				gintsts.d32 = DWC_READ_REG32(&core_if->core_global_regs->gintsts);
++			} while (!gintsts.b.goutnakeff);
++			gintsts.d32 = 0;
++			gintsts.b.goutnakeff = 1;
++			DWC_WRITE_REG32(&core_if->core_global_regs->gintsts, gintsts.d32);
++
 +			depctl.d32 = 0;
 +			depctl.b.epdis = 1;
 +			depctl.b.snak = 1;
++			DWC_WRITE_REG32(&core_if->dev_if->out_ep_regs[i]->doepctl, depctl.d32);
++			do {
++				dwc_udelay(10);
++				doepint.d32 = DWC_READ_REG32(&core_if->dev_if->
++					out_ep_regs[i]->doepint);
++			} while (!doepint.b.epdisabled);
++
++			doepint.b.epdisabled = 1;
++			DWC_WRITE_REG32(&core_if->dev_if->out_ep_regs[i]->doepint, doepint.d32);
++
++			dctl.d32 = 0;
++			dctl.b.cgoutnak = 1;
++			DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->dctl, 0, dctl.d32);
 +		} else {
 +			depctl.d32 = 0;
 +		}
@@ -50185,9 +50241,8 @@ index 0000000..83545c0
 +		diepmsk_data_t msk = {.d32 = 0 };
 +		msk.b.txfifoundrn = 1;
 +		if (core_if->multiproc_int_enable) {
-+			DWC_MODIFY_REG32(&dev_if->
-+					 dev_global_regs->diepeachintmsk[0],
-+					 msk.d32, msk.d32);
++			DWC_MODIFY_REG32(&dev_if->dev_global_regs->
++					 diepeachintmsk[0], msk.d32, msk.d32);
 +		} else {
 +			DWC_MODIFY_REG32(&dev_if->dev_global_regs->diepmsk,
 +					 msk.d32, msk.d32);
@@ -50383,7 +50438,8 @@ index 0000000..83545c0
 +		DWC_DEBUGPL(DBG_CIL, "new hptxfsiz=%08x\n",
 +			    DWC_READ_REG32(&global_regs->hptxfsiz));
 +		
-+		if (core_if->en_multiple_tx_fifo) {
++		if (core_if->en_multiple_tx_fifo
++		    && core_if->snpsid <= OTG_CORE_REV_2_94a) {
 +			/* Global DFIFOCFG calculation for Host mode - include RxFIFO, NPTXFIFO and HPTXFIFO */
 +			gdfifocfg.d32 = DWC_READ_REG32(&global_regs->gdfifocfg);
 +			rxfsiz = (DWC_READ_REG32(&global_regs->grxfsiz) & 0x0000ffff);
@@ -50882,26 +50938,26 @@ index 0000000..83545c0
 +	/* Put the sate to 2 as it was time outed */
 +	xfer_info->state = 2;
 +
-+	dctl.d32 = DWC_READ_REG32(&xfer_info->core_if->
-+		dev_if->dev_global_regs->dctl);
-+	gintsts.d32 = DWC_READ_REG32(&xfer_info->core_if->
-+		core_global_regs->gintsts);
-+	gintmsk.d32 = DWC_READ_REG32(&xfer_info->core_if->
-+		core_global_regs->gintmsk);
++	dctl.d32 =
++	    DWC_READ_REG32(&xfer_info->core_if->dev_if->dev_global_regs->dctl);
++	gintsts.d32 =
++	    DWC_READ_REG32(&xfer_info->core_if->core_global_regs->gintsts);
++	gintmsk.d32 =
++	    DWC_READ_REG32(&xfer_info->core_if->core_global_regs->gintmsk);
 +
 +	if (!gintmsk.b.goutnakeff) {
 +		/* Unmask it */
 +		gintmsk.b.goutnakeff = 1;
-+		DWC_WRITE_REG32(&xfer_info->core_if->
-+			core_global_regs->gintmsk, gintmsk.d32);
++		DWC_WRITE_REG32(&xfer_info->core_if->core_global_regs->gintmsk,
++				gintmsk.d32);
 +
 +	}
 +
 +	if (!gintsts.b.goutnakeff) {
 +		dctl.b.sgoutnak = 1;
 +	}
-+	DWC_WRITE_REG32(&xfer_info->core_if->dev_if->
-+		dev_global_regs->dctl, dctl.d32);
++	DWC_WRITE_REG32(&xfer_info->core_if->dev_if->dev_global_regs->dctl,
++			dctl.d32);
 +
 +}
 +
@@ -51407,11 +51463,20 @@ index 0000000..83545c0
 + */
 +void dwc_otg_read_setup_packet(dwc_otg_core_if_t * core_if, uint32_t * dest)
 +{
++	device_grxsts_data_t status;
 +	/* Get the 8 bytes of a setup transaction data */
 +
 +	/* Pop 2 DWORDS off the receive data FIFO into memory */
 +	dest[0] = DWC_READ_REG32(core_if->data_fifo[0]);
 +	dest[1] = DWC_READ_REG32(core_if->data_fifo[0]);
++	if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++		status.d32 =
++		    DWC_READ_REG32(&core_if->core_global_regs->grxstsp);
++		DWC_DEBUGPL(DBG_ANY,
++			    "EP:%d BCnt:%d " "pktsts:%x Frame:%d(0x%0x)\n",
++			    status.b.epnum, status.b.bcnt, status.b.pktsts,
++			    status.b.fn, status.b.fn);
++	}
 +}
 +
 +/**
@@ -51430,6 +51495,7 @@ index 0000000..83545c0
 +	depctl_data_t doepctl;
 +	dctl_data_t dctl = {.d32 = 0 };
 +
++	ep->stp_rollover = 0;
 +	/* Read the Device Status and Endpoint 0 Control registers */
 +	dsts.d32 = DWC_READ_REG32(&dev_if->dev_global_regs->dsts);
 +	diepctl.d32 = DWC_READ_REG32(&dev_if->in_ep_regs[0]->diepctl);
@@ -51450,9 +51516,10 @@ index 0000000..83545c0
 +	DWC_WRITE_REG32(&dev_if->in_ep_regs[0]->diepctl, diepctl.d32);
 +
 +	/* Enable OUT EP for receive */
++	if (core_if->snpsid <= OTG_CORE_REV_2_94a) {
 +	doepctl.b.epena = 1;
 +	DWC_WRITE_REG32(&dev_if->out_ep_regs[0]->doepctl, doepctl.d32);
-+
++	}
 +#ifdef VERBOSE
 +	DWC_DEBUGPL(DBG_PCDV, "doepctl0=%0x\n",
 +		    DWC_READ_REG32(&dev_if->out_ep_regs[0]->doepctl));
@@ -51529,10 +51596,12 @@ index 0000000..83545c0
 +			dcfg.b.epmscnt++;
 +			DWC_WRITE_REG32(&dev_if->dev_global_regs->dcfg, dcfg.d32);
 +
-+			DWC_DEBUGPL(DBG_PCDV,"%s first_in_nextep_seq= %2d; nextep_seq[]:\n", 
++			DWC_DEBUGPL(DBG_PCDV,
++				    "%s first_in_nextep_seq= %2d; nextep_seq[]:\n",
 +				__func__, core_if->first_in_nextep_seq);
 +			for (i=0; i <= core_if->dev_if->num_in_eps; i++) {
-+				DWC_DEBUGPL(DBG_PCDV, "%2d\n", core_if->nextep_seq[i]);
++				DWC_DEBUGPL(DBG_PCDV, "%2d\n",
++					    core_if->nextep_seq[i]);
 +			}
 +
 +		}
@@ -51599,8 +51668,7 @@ index 0000000..83545c0
 +				 0, daintmsk.d32);
 +	} else {
 +		if (ep->type == DWC_OTG_EP_TYPE_ISOC) {
-+			if (ep->is_in)
-+			{
++			if (ep->is_in) {
 +				diepmsk_data_t diepmsk = {.d32 = 0 };
 +				diepmsk.b.nak = 1;
 +				DWC_MODIFY_REG32(&dev_if->dev_global_regs->diepmsk, 0, diepmsk.d32);
@@ -51668,11 +51736,14 @@ index 0000000..83545c0
 +			core_if->first_in_nextep_seq = i;
 +		core_if->nextep_seq[ep->num] = 0xff;
 +		depctl.b.nextep = 0;
-+		dcfg.d32 = DWC_READ_REG32(&core_if->dev_if->dev_global_regs->dcfg);
++		dcfg.d32 =
++		    DWC_READ_REG32(&core_if->dev_if->dev_global_regs->dcfg);
 +		dcfg.b.epmscnt--;
-+		DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->dcfg, dcfg.d32);
++		DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->dcfg,
++				dcfg.d32);
 +
-+			DWC_DEBUGPL(DBG_PCDV,"%s first_in_nextep_seq= %2d; nextep_seq[]:\n", 
++		DWC_DEBUGPL(DBG_PCDV,
++			    "%s first_in_nextep_seq= %2d; nextep_seq[]:\n",
 +				__func__, core_if->first_in_nextep_seq);
 +			for (i=0; i <= core_if->dev_if->num_in_eps; i++) {
 +				DWC_DEBUGPL(DBG_PCDV, "%2d\n", core_if->nextep_seq[i]);
@@ -51687,43 +51758,47 @@ index 0000000..83545c0
 +
 +	DWC_WRITE_REG32(addr, depctl.d32);
 +	depctl.d32 = DWC_READ_REG32(addr);
-+	if (core_if->dma_enable && ep->type == DWC_OTG_EP_TYPE_ISOC && depctl.b.epena)
-+	{
++	if (core_if->dma_enable && ep->type == DWC_OTG_EP_TYPE_ISOC
++	    && depctl.b.epena) {
 +		depctl_data_t depctl = {.d32 = 0};
-+		if (ep->is_in)
-+		{
++		if (ep->is_in) {
 +			diepint_data_t diepint = {.d32 = 0};
 +			
 +			depctl.b.snak = 1;
-+			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->diepctl, depctl.d32);
-+			do 
-+			{
++			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->
++					diepctl, depctl.d32);
++			do {
 +				dwc_udelay(10);
-+				diepint.d32 = DWC_READ_REG32(&core_if->dev_if->
-+											in_ep_regs[ep->num]->diepint);
++				diepint.d32 =
++				    DWC_READ_REG32(&core_if->
++						   dev_if->in_ep_regs[ep->num]->
++						   diepint);
 +			} while (!diepint.b.inepnakeff); 
 +			diepint.b.inepnakeff = 1;
-+			DWC_WRITE_REG32(&core_if->dev_if->
-+							in_ep_regs[ep->num]->diepint, diepint.d32);
++			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->
++					diepint, diepint.d32);
 +			depctl.d32 = 0;
 +			depctl.b.epdis = 1;
-+			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->diepctl, depctl.d32);
-+			do 
-+			{
++			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->
++					diepctl, depctl.d32);
++			do {
 +				dwc_udelay(10);
-+				diepint.d32 = DWC_READ_REG32(&core_if->dev_if->
-+											in_ep_regs[ep->num]->diepint);
++				diepint.d32 =
++				    DWC_READ_REG32(&core_if->
++						   dev_if->in_ep_regs[ep->num]->
++						   diepint);
 +			} while (!diepint.b.epdisabled); 
 +			diepint.b.epdisabled = 1;
-+			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->diepint, diepint.d32);
++			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->
++					diepint, diepint.d32);
 +		} else {
 +			dctl_data_t dctl = {.d32 = 0};
 +			gintmsk_data_t gintsts = {.d32 = 0};
 +			doepint_data_t doepint = {.d32 = 0};
 +			dctl.b.sgoutnak = 1;
-+			DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->dctl, 0, dctl.d32);
-+			do 
-+			{
++			DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->
++					 dctl, 0, dctl.d32);
++			do {
 +				dwc_udelay(10);
 +				gintsts.d32 = DWC_READ_REG32(&core_if->core_global_regs->gintsts);
 +			} while (!gintsts.b.goutnakeff); 
@@ -51810,8 +51885,7 @@ index 0000000..83545c0
 +					(total_len % maxxfer_local);
 +		} else
 +			xfer_est = ep->desc_cnt * maxxfer_local;
-+	}
-+	else
++	} else
 +		xfer_est = total_len;
 +	offset = 0;
 +	for (i = 0; i < ep->desc_cnt; ++i) {
@@ -51884,8 +51958,7 @@ index 0000000..83545c0
 +	DWC_DEBUGPL(DBG_PCDV, "b4 dtxfsts[%d]=0x%08x\n", epnum, txstatus.d32);
 +
 +	while (txstatus.b.txfspcavail > dwords &&
-+	       dwc_ep->xfer_count < dwc_ep->xfer_len &&
-+	       dwc_ep->xfer_len != 0) {
++	       dwc_ep->xfer_count < dwc_ep->xfer_len && dwc_ep->xfer_len != 0) {
 +		/* Write the FIFO */
 +		dwc_otg_ep_write_packet(core_if, dwc_ep, 0);
 +
@@ -51939,8 +52012,7 @@ index 0000000..83545c0
 +		    DWC_READ_REG32(&core_if->core_global_regs->gnptxsts);
 +
 +		if (core_if->en_multiple_tx_fifo == 0
-+		    && gtxstatus.b.nptxqspcavail == 0
-+		    && !core_if->dma_enable) {
++		    && gtxstatus.b.nptxqspcavail == 0 && !core_if->dma_enable) {
 +#ifdef DEBUG
 +			DWC_PRINTF("TX Queue Full (0x%0x)\n", gtxstatus.d32);
 +#endif
@@ -52036,15 +52108,14 @@ index 0000000..83545c0
 +		if (!core_if->core_params->en_multiple_tx_fifo && core_if->dma_enable)
 +			depctl.b.nextep = core_if->nextep_seq[ep->num];
 +		
-+		if (ep->type == DWC_OTG_EP_TYPE_ISOC)
-+		{
++		if (ep->type == DWC_OTG_EP_TYPE_ISOC) {
 +			dsts_data_t dsts = {.d32 = 0};
 +			if (ep->bInterval == 1) {
 +				dsts.d32 =
-+					DWC_READ_REG32(&core_if->dev_if->dev_global_regs->dsts);
++				    DWC_READ_REG32(&core_if->dev_if->
++						   dev_global_regs->dsts);
 +				ep->frame_num = dsts.b.soffn + ep->bInterval;
-+				if (ep->frame_num > 0x3FFF)
-+				{
++				if (ep->frame_num > 0x3FFF) {
 +					ep->frm_overrun = 1;
 +					ep->frame_num &= 0x3FFF;
 +				} else 
@@ -52146,15 +52217,14 @@ index 0000000..83545c0
 +			DWC_WRITE_REG32(&out_regs->doeptsiz, deptsiz.d32);
 +		}
 +
-+		if (ep->type == DWC_OTG_EP_TYPE_ISOC)
-+		{
++		if (ep->type == DWC_OTG_EP_TYPE_ISOC) {
 +			dsts_data_t dsts = {.d32 = 0};
 +			if (ep->bInterval == 1) {
 +				dsts.d32 =
-+					DWC_READ_REG32(&core_if->dev_if->dev_global_regs->dsts);
++				    DWC_READ_REG32(&core_if->dev_if->
++						   dev_global_regs->dsts);
 +				ep->frame_num = dsts.b.soffn + ep->bInterval;
-+				if (ep->frame_num > 0x3FFF)
-+				{
++				if (ep->frame_num > 0x3FFF) {
 +					ep->frm_overrun = 1;
 +					ep->frame_num &= 0x3FFF;
 +				} else 
@@ -52178,11 +52248,10 @@ index 0000000..83545c0
 +			    DWC_READ_REG32(&out_regs->doepctl),
 +			    DWC_READ_REG32(&out_regs->doeptsiz));
 +		DWC_DEBUGPL(DBG_PCD, "DAINTMSK=%08x GINTMSK=%08x\n",
-+			    DWC_READ_REG32(&core_if->dev_if->
-+					   dev_global_regs->daintmsk),
-+			    DWC_READ_REG32(&core_if->
-+					   core_global_regs->gintmsk));
-+
++			    DWC_READ_REG32(&core_if->dev_if->dev_global_regs->
++					   daintmsk),
++			    DWC_READ_REG32(&core_if->core_global_regs->
++					   gintmsk));
 +
 +		/* Timer is scheduling only for out bulk transfers for 
 +		 * "Device DDMA OUT NAK Enhancement" feature to inform user 
@@ -52333,8 +52402,18 @@ index 0000000..83545c0
 +
 +		gnptxsts_data_t gtxstatus;
 +
++		if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++			depctl.d32 = DWC_READ_REG32(&in_regs->diepctl);
++			if (depctl.b.epena)
++				return;
++		}
++
 +		gtxstatus.d32 =
 +		    DWC_READ_REG32(&core_if->core_global_regs->gnptxsts);
++
++		/* If dedicated FIFO every time flush fifo before enable ep*/
++		if (core_if->en_multiple_tx_fifo && core_if->snpsid >= OTG_CORE_REV_3_00a)
++			dwc_otg_flush_tx_fifo(core_if, ep->tx_fifo_num);
 +
 +		if (core_if->en_multiple_tx_fifo == 0
 +		    && gtxstatus.b.nptxqspcavail == 0
@@ -52452,6 +52531,8 @@ index 0000000..83545c0
 +		/* Zero Length Packet */
 +		deptsiz.b.xfersize = ep->maxpacket;
 +		deptsiz.b.pktcnt = 1;
++		if (core_if->snpsid >= OTG_CORE_REV_3_00a)
++			deptsiz.b.supcnt = 3;
 +
 +		DWC_DEBUGPL(DBG_PCDV, "len=%d  xfersize=%d pktcnt=%d\n",
 +			    ep->xfer_len, deptsiz.b.xfersize, deptsiz.b.pktcnt);
@@ -52468,6 +52549,10 @@ index 0000000..83545c0
 +
 +				/** DMA Descriptor Setup */
 +				dma_desc->status.b.bs = BS_HOST_BUSY;
++				if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++					dma_desc->status.b.mtrf = 0;
++					dma_desc->status.b.sr = 0;
++				}
 +				dma_desc->status.b.l = 1;
 +				dma_desc->status.b.ioc = 1;
 +				dma_desc->status.b.bytes = ep->maxpacket;
@@ -52477,8 +52562,8 @@ index 0000000..83545c0
 +
 +				/** DOEPDMA0 Register write */
 +				DWC_WRITE_REG32(&out_regs->doepdma,
-+						core_if->
-+						dev_if->dma_out_desc_addr);
++						core_if->dev_if->
++						dma_out_desc_addr);
 +			}
 +		} else {
 +			DWC_WRITE_REG32(&out_regs->doeptsiz, deptsiz.d32);
@@ -52888,14 +52973,14 @@ index 0000000..83545c0
 +
 +	DWC_PRINTF("Device Global Registers\n");
 +	addr = &core_if->dev_if->dev_global_regs->dcfg;
-+	DWC_PRINTF("DCFG		 @0x%08lX : 0x%08X\n", (unsigned long) addr,
-+		   DWC_READ_REG32(addr));
++	DWC_PRINTF("DCFG		 @0x%08lX : 0x%08X\n",
++		   (unsigned long)addr, DWC_READ_REG32(addr));
 +	addr = &core_if->dev_if->dev_global_regs->dctl;
-+	DWC_PRINTF("DCTL		 @0x%08lX : 0x%08X\n", (unsigned long) addr,
-+		   DWC_READ_REG32(addr));
++	DWC_PRINTF("DCTL		 @0x%08lX : 0x%08X\n",
++		   (unsigned long)addr, DWC_READ_REG32(addr));
 +	addr = &core_if->dev_if->dev_global_regs->dsts;
-+	DWC_PRINTF("DSTS		 @0x%08lX : 0x%08X\n", (unsigned long) addr,
-+		   DWC_READ_REG32(addr));
++	DWC_PRINTF("DSTS		 @0x%08lX : 0x%08X\n",
++		   (unsigned long)addr, DWC_READ_REG32(addr));
 +	addr = &core_if->dev_if->dev_global_regs->diepmsk;
 +	DWC_PRINTF("DIEPMSK	 @0x%08lX : 0x%08X\n", (unsigned long)addr,
 +		   DWC_READ_REG32(addr));
@@ -52950,8 +53035,8 @@ index 0000000..83545c0
 +
 +		for (i = 0; i <= core_if->dev_if->num_in_eps; i++) {
 +			addr =
-+			    &core_if->dev_if->dev_global_regs->
-+			    diepeachintmsk[i];
++			    &core_if->dev_if->
++			    dev_global_regs->diepeachintmsk[i];
 +			DWC_PRINTF("DIEPEACHINTMSK[%d]	 @0x%08lX : 0x%08X\n",
 +				   i, (unsigned long)addr,
 +				   DWC_READ_REG32(addr));
@@ -52959,8 +53044,8 @@ index 0000000..83545c0
 +
 +		for (i = 0; i <= core_if->dev_if->num_out_eps; i++) {
 +			addr =
-+			    &core_if->dev_if->dev_global_regs->
-+			    doepeachintmsk[i];
++			    &core_if->dev_if->
++			    dev_global_regs->doepeachintmsk[i];
 +			DWC_PRINTF("DOEPEACHINTMSK[%d]	 @0x%08lX : 0x%08X\n",
 +				   i, (unsigned long)addr,
 +				   DWC_READ_REG32(addr));
@@ -53408,8 +53493,8 @@ index 0000000..83545c0
 +
 +		dwords = (len + 3) / 4;
 +		txstatus.d32 =
-+		    DWC_READ_REG32(&core_if->dev_if->
-+				   in_ep_regs[ep->num]->dtxfsts);
++		    DWC_READ_REG32(&core_if->dev_if->in_ep_regs[ep->num]->
++				   dtxfsts);
 +		DWC_DEBUGPL(DBG_PCDV, "dtxfsts[%d]=0x%08x\n", ep->num,
 +			    txstatus.d32);
 +	}
@@ -53465,13 +53550,14 @@ index 0000000..83545c0
 +		    (ep->xfer_len + (ep->maxpacket - 1)) / ep->maxpacket;
 +		deptsiz.b.xfersize = deptsiz.b.pktcnt * ep->maxpacket;
 +
-+		DWC_WRITE_REG32(&core_if->dev_if->out_ep_regs[ep->num]->
-+				doeptsiz, deptsiz.d32);
++		DWC_WRITE_REG32(&core_if->dev_if->
++				out_ep_regs[ep->num]->doeptsiz, deptsiz.d32);
 +
 +		if (core_if->dma_enable) {
 +			DWC_WRITE_REG32(&
-+					(core_if->dev_if->out_ep_regs[ep->num]->
-+					 doepdma), (uint32_t) ep->dma_addr);
++					(core_if->dev_if->
++					 out_ep_regs[ep->num]->doepdma),
++					(uint32_t) ep->dma_addr);
 +		}
 +	}
 +
@@ -53973,8 +54059,7 @@ index 0000000..83545c0
 +		return -DWC_E_INVALID;
 +	}
 +
-+	if (val >
-+		((core_if->hptxfsiz.d32)>> 16)) {
++	if (val > ((core_if->hptxfsiz.d32) >> 16)) {
 +		if (dwc_otg_param_initialized
 +		    (core_if->core_params->host_perio_tx_fifo_size)) {
 +			DWC_ERROR
@@ -54711,14 +54796,21 @@ index 0000000..83545c0
 +{
 +	int retval = 0;
 +	int valid = 1;
++	hwcfg4_data_t hwcfg4 = {.d32 = 0 };
++	hwcfg4.d32 = DWC_READ_REG32(&core_if->core_global_regs->ghwcfg4);
 +
-+	if (DWC_OTG_PARAM_TEST(val, 0, 2)) {
++	if (DWC_OTG_PARAM_TEST(val, 0, 3)) {
 +		DWC_WARN("`%d' invalid for parameter `power_down'\n", val);
 +		DWC_WARN("power_down must be 0 - 2\n");
 +		return -DWC_E_INVALID;
 +	}
 +
 +	if ((val == 2) && (core_if->snpsid < OTG_CORE_REV_2_91a)) {
++		valid = 0;
++	}
++	if ((val == 3)
++	    && ((core_if->snpsid < OTG_CORE_REV_3_00a)
++		|| (hwcfg4.b.xhiber == 0))) {
 +		valid = 0;
 +	}
 +	if (valid == 0) {
@@ -55337,16 +55429,16 @@ index 0000000..83545c0
 +	return;
 +}
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_cil.h b/drivers/usb/host/dwc_otg/dwc_otg_cil.h
-new file mode 100755
-index 0000000..9547362
+new file mode 100644
+index 0000000..d367cd1
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_cil.h
-@@ -0,0 +1,1455 @@
+@@ -0,0 +1,1464 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_cil.h $
-+ * $Revision: #122 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871160 $
++ * $Revision: #123 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -55418,6 +55510,7 @@ index 0000000..9547362
 +#define OTG_CORE_REV_2_92a	0x4F54292A
 +#define OTG_CORE_REV_2_93a	0x4F54293A
 +#define OTG_CORE_REV_2_94a	0x4F54294A
++#define OTG_CORE_REV_3_00a	0x4F54300A
 +
 +/**
 + * Information for each ISOC packet.
@@ -55489,6 +55582,9 @@ index 0000000..9547362
 +
 +	/** stall clear flag */
 +	unsigned stall_clear_flag:1;
++
++	/** SETUP pkt cnt rollover flag for EP0 out*/
++	unsigned stp_rollover;
 +
 +#ifdef DWC_UTE_CFI
 +	/* The buffer mode */
@@ -56108,6 +56204,8 @@ index 0000000..9547362
 +	uint32_t gdfifocfg_local;
 +	uint32_t dtxfsiz_local[MAX_EPS_CHANNELS];
 +	uint32_t gpwrdn_local;
++	uint32_t xhib_pcgcctl;
++	uint32_t xhib_gpwrdn;
 +};
 +
 +struct dwc_otg_host_regs_backup {
@@ -56307,6 +56405,9 @@ index 0000000..9547362
 +
 +	/** hibernation/suspend flag */
 +	int hibernation_suspend;
++
++	/** Device mode extended hibernation flag */
++	int xhib;
 +
 +	/** OTG revision supported */
 +	uint32_t otg_ver;
@@ -56798,16 +56899,16 @@ index 0000000..9547362
 +
 +#endif
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_cil_intr.c b/drivers/usb/host/dwc_otg/dwc_otg_cil_intr.c
-new file mode 100755
-index 0000000..edc5c92
+new file mode 100644
+index 0000000..21804c4
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_cil_intr.c
-@@ -0,0 +1,1391 @@
+@@ -0,0 +1,1563 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_cil_intr.c $
-+ * $Revision: #31 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871286 $
++ * $Revision: #32 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -56973,6 +57074,10 @@ index 0000000..edc5c92
 +		/* Print statements during the HNP interrupt handling
 +		 * can cause it to fail.*/
 +		gotgctl.d32 = DWC_READ_REG32(&global_regs->gotgctl);
++		/* WA for 3.00a- HW is not setting cur_mode, even sometimes
++		 * this does not help*/
++		if (core_if->snpsid >= OTG_CORE_REV_3_00a)
++			dwc_udelay(100);
 +		if (gotgctl.b.hstnegscs) {
 +			if (dwc_otg_is_host_mode(core_if)) {
 +				core_if->op_state = B_HOST;
@@ -57248,8 +57353,8 @@ index 0000000..edc5c92
 +	if (dwc_otg_is_device_mode(core_if)) {
 +		dctl_data_t dctl = {.d32 = 0 };
 +		DWC_DEBUGPL(DBG_PCD, "DSTS=0x%0x\n",
-+			    DWC_READ_REG32(&core_if->dev_if->
-+					   dev_global_regs->dsts));
++			    DWC_READ_REG32(&core_if->dev_if->dev_global_regs->
++					   dsts));
 +		if (core_if->lx_state == DWC_OTG_L2) {
 +#ifdef PARTIAL_POWER_DOWN
 +			if (core_if->hwcfg4.b.power_optimiz) {
@@ -57271,8 +57376,8 @@ index 0000000..edc5c92
 +#endif
 +			/* Clear the Remote Wakeup Signaling */
 +			dctl.b.rmtwkupsig = 1;
-+			DWC_MODIFY_REG32(&core_if->dev_if->
-+					 dev_global_regs->dctl, dctl.d32, 0);
++			DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->
++					 dctl, dctl.d32, 0);
 +
 +			DWC_SPINUNLOCK(core_if->lock);
 +			if (core_if->pcd_cb && core_if->pcd_cb->resume_wakeup) {
@@ -57416,8 +57521,7 @@ index 0000000..edc5c92
 +
 +	DWC_DEBUGPL(DBG_ANY, "%s called\n", __FUNCTION__);
 +	gpwrdn_temp.d32 = DWC_READ_REG32(&core_if->core_global_regs->gpwrdn);
-+	if (core_if->power_down == 2)
-+	{		
++	if (core_if->power_down == 2) {
 +		if (!core_if->hibernation_suspend) {
 +			DWC_PRINTF("Already exited from Hibernation\n");
 +			return 1;
@@ -57479,8 +57583,7 @@ index 0000000..edc5c92
 +		}
 +	}
 +
-+	if (core_if->adp_enable)
-+	{
++	if (core_if->adp_enable) {
 +		uint8_t is_host = 0;
 +		DWC_SPINUNLOCK(core_if->lock);
 +		/* Change the core_if's lock to hcd/pcd lock depend on mode? */
@@ -57783,16 +57886,17 @@ index 0000000..edc5c92
 +				/* Enable Power Down Logic */
 +				gpwrdn.b.pmuintsel = 1;
 +				gpwrdn.b.pmuactv = 1;
-+				DWC_MODIFY_REG32(&core_if->core_global_regs->gpwrdn, 0, gpwrdn.d32);
++				DWC_MODIFY_REG32(&core_if->core_global_regs->
++						 gpwrdn, 0, gpwrdn.d32);
 +				dwc_otg_adp_probe_start(core_if);
 +
 +				/* Power off the core */
 +				if (core_if->power_down == 2) {
 +					gpwrdn.d32 = 0;
 +					gpwrdn.b.pwrdnswtch = 1;
-+					DWC_MODIFY_REG32(&core_if->
-+							 core_global_regs->
-+							 gpwrdn, gpwrdn.d32, 0);
++					DWC_MODIFY_REG32
++					    (&core_if->core_global_regs->gpwrdn,
++					     gpwrdn.d32, 0);
 +				}
 +			}
 +		}
@@ -57946,6 +58050,49 @@ index 0000000..edc5c92
 +
 +				return 1;
 +			}
++		} else if (core_if->power_down == 3) {
++			pcgcctl_data_t pcgcctl = {.d32 = 0 };
++			dcfg.d32 = DWC_READ_REG32(&core_if->dev_if->dev_global_regs->dcfg);
++			DWC_DEBUGPL(DBG_ANY, "lx_state = %08x\n",core_if->lx_state);
++			DWC_DEBUGPL(DBG_ANY, " device address = %08d\n",dcfg.b.devaddr);
++
++			if (core_if->lx_state != DWC_OTG_L3 && dcfg.b.devaddr) {
++				DWC_DEBUGPL(DBG_ANY, "Start entering to extended hibernation\n");
++				core_if->xhib = 1;
++
++				/* Clear interrupt in gintsts */
++				gintsts.d32 = 0;
++				gintsts.b.usbsuspend = 1;
++				DWC_WRITE_REG32(&core_if->core_global_regs->
++					gintsts, gintsts.d32);
++
++				dwc_otg_save_global_regs(core_if);
++				dwc_otg_save_dev_regs(core_if);
++
++				/* Wait for 10 PHY clocks */
++				dwc_udelay(10);
++
++				/* Program GPIO register while entering to xHib */
++				DWC_WRITE_REG32(&core_if->core_global_regs->ggpio, 0x1);
++
++				pcgcctl.b.enbl_extnd_hiber = 1;
++				DWC_MODIFY_REG32(core_if->pcgcctl, 0, pcgcctl.d32);
++				DWC_MODIFY_REG32(core_if->pcgcctl, 0, pcgcctl.d32);
++
++				pcgcctl.d32 = 0;
++				pcgcctl.b.extnd_hiber_pwrclmp = 1;
++				DWC_MODIFY_REG32(core_if->pcgcctl, 0, pcgcctl.d32);
++
++				pcgcctl.d32 = 0;
++				pcgcctl.b.extnd_hiber_switch = 1;
++				core_if->gr_backup->xhib_gpwrdn = DWC_READ_REG32(&core_if->core_global_regs->gpwrdn);
++				core_if->gr_backup->xhib_pcgcctl = DWC_READ_REG32(core_if->pcgcctl) | pcgcctl.d32;
++				DWC_MODIFY_REG32(core_if->pcgcctl, 0, pcgcctl.d32);
++
++				DWC_DEBUGPL(DBG_ANY, "Finished entering to extended hibernation\n");
++
++				return 1;
++			}
 +		}
 +	} else {
 +		if (core_if->op_state == A_PERIPHERAL) {
@@ -57966,6 +58113,70 @@ index 0000000..edc5c92
 +	gintsts.d32 = 0;
 +	gintsts.b.usbsuspend = 1;
 +	DWC_WRITE_REG32(&core_if->core_global_regs->gintsts, gintsts.d32);
++
++	return 1;
++}
++
++static int32_t dwc_otg_handle_xhib_exit_intr(dwc_otg_core_if_t * core_if)
++{
++	gpwrdn_data_t gpwrdn = {.d32 = 0 };
++	pcgcctl_data_t pcgcctl = {.d32 = 0 };
++	gahbcfg_data_t gahbcfg = {.d32 = 0 };
++
++	dwc_udelay(10);
++
++	/* Program GPIO register while entering to xHib */
++	DWC_WRITE_REG32(&core_if->core_global_regs->ggpio, 0x0);
++
++	pcgcctl.d32 = core_if->gr_backup->xhib_pcgcctl;
++	pcgcctl.b.extnd_hiber_pwrclmp = 0;
++	DWC_WRITE_REG32(core_if->pcgcctl, pcgcctl.d32);
++	dwc_udelay(10);
++
++	gpwrdn.d32 = core_if->gr_backup->xhib_gpwrdn;
++	gpwrdn.b.restore = 1;
++	DWC_WRITE_REG32(&core_if->core_global_regs->gpwrdn, gpwrdn.d32);
++	dwc_udelay(10);
++
++	restore_lpm_i2c_regs(core_if);
++
++	pcgcctl.d32 = core_if->gr_backup->pcgcctl_local & (0x3FFFF << 14);
++	pcgcctl.b.max_xcvrselect = 1;
++	pcgcctl.b.ess_reg_restored = 0;
++	pcgcctl.b.extnd_hiber_switch = 0;
++	pcgcctl.b.extnd_hiber_pwrclmp = 0;
++	pcgcctl.b.enbl_extnd_hiber = 1;
++	DWC_WRITE_REG32(core_if->pcgcctl, pcgcctl.d32);
++
++	gahbcfg.d32 = core_if->gr_backup->gahbcfg_local;
++	gahbcfg.b.glblintrmsk = 1;
++	DWC_WRITE_REG32(&core_if->core_global_regs->gahbcfg, gahbcfg.d32);
++
++	DWC_WRITE_REG32(&core_if->core_global_regs->gintsts, 0xFFFFFFFF);
++	DWC_WRITE_REG32(&core_if->core_global_regs->gintmsk, 0x1 << 16);
++
++	DWC_WRITE_REG32(&core_if->core_global_regs->gusbcfg,
++			core_if->gr_backup->gusbcfg_local);
++	DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->dcfg,
++			core_if->dr_backup->dcfg);
++
++	pcgcctl.d32 = 0;
++	pcgcctl.d32 = core_if->gr_backup->pcgcctl_local & (0x3FFFF << 14);
++	pcgcctl.b.max_xcvrselect = 1;
++	pcgcctl.d32 |= 0x608;
++	DWC_WRITE_REG32(core_if->pcgcctl, pcgcctl.d32);
++	dwc_udelay(10);
++
++	pcgcctl.d32 = 0;
++	pcgcctl.d32 = core_if->gr_backup->pcgcctl_local & (0x3FFFF << 14);
++	pcgcctl.b.max_xcvrselect = 1;
++	pcgcctl.b.ess_reg_restored = 1;
++	pcgcctl.b.enbl_extnd_hiber = 1;
++	pcgcctl.b.rstpdwnmodule = 1;
++	pcgcctl.b.restoremode = 1;
++	DWC_WRITE_REG32(core_if->pcgcctl, pcgcctl.d32);
++
++	DWC_DEBUGPL(DBG_ANY, "%s called\n", __FUNCTION__);
 +
 +	return 1;
 +}
@@ -58091,6 +58302,16 @@ index 0000000..edc5c92
 +	if (core_if->lock)
 +		DWC_SPINLOCK(core_if->lock);
 +
++	if (core_if->power_down == 3 && core_if->xhib == 1) {
++		DWC_DEBUGPL(DBG_ANY, "Exiting from xHIB state\n");
++		retval |= dwc_otg_handle_xhib_exit_intr(core_if);
++		core_if->xhib = 2;
++		if (core_if->lock)
++			DWC_SPINUNLOCK(core_if->lock);
++
++		return retval;
++	}
++
 +	if (core_if->hibernation_suspend <= 0) {
 +		gintsts.d32 = dwc_otg_read_common_intr(core_if);
 +
@@ -58101,7 +58322,8 @@ index 0000000..edc5c92
 +			retval |= dwc_otg_handle_otg_intr(core_if);
 +		}
 +		if (gintsts.b.conidstschng) {
-+			retval |= dwc_otg_handle_conn_id_status_change_intr(core_if);
++			retval |=
++			    dwc_otg_handle_conn_id_status_change_intr(core_if);
 +		}
 +		if (gintsts.b.disconnect) {
 +			retval |= dwc_otg_handle_disconnect_intr(core_if);
@@ -58124,6 +58346,57 @@ index 0000000..edc5c92
 +			gintsts.d32 = 0;
 +	                if (core_if->power_down == 2)
 +				core_if->hibernation_suspend = -1;
++			else if (core_if->power_down == 3 && core_if->xhib == 2) {
++				gpwrdn_data_t gpwrdn = {.d32 = 0 };
++				pcgcctl_data_t pcgcctl = {.d32 = 0 };
++				dctl_data_t dctl = {.d32 = 0 };
++
++				DWC_WRITE_REG32(&core_if->core_global_regs->
++						gintsts, 0xFFFFFFFF);
++
++				DWC_DEBUGPL(DBG_ANY,
++					    "RESTORE DONE generated\n");
++
++				gpwrdn.b.restore = 1;
++				DWC_MODIFY_REG32(&core_if->core_global_regs->gpwrdn, gpwrdn.d32, 0);
++				dwc_udelay(10);
++
++				pcgcctl.b.rstpdwnmodule = 1;
++				DWC_MODIFY_REG32(core_if->pcgcctl, pcgcctl.d32, 0);
++
++				DWC_WRITE_REG32(&core_if->core_global_regs->gusbcfg, core_if->gr_backup->gusbcfg_local);
++				DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->dcfg, core_if->dr_backup->dcfg);
++				DWC_WRITE_REG32(&core_if->dev_if->dev_global_regs->dctl, core_if->dr_backup->dctl);
++				dwc_udelay(50);
++
++				dctl.b.pwronprgdone = 1;
++				DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->dctl, 0, dctl.d32);
++				dwc_udelay(10);
++
++				dwc_otg_restore_global_regs(core_if);
++				dwc_otg_restore_dev_regs(core_if, 0);
++
++				dctl.d32 = 0;
++				dctl.b.pwronprgdone = 1;
++				DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->dctl, dctl.d32, 0);
++				dwc_udelay(10);
++
++				pcgcctl.d32 = 0;
++				pcgcctl.b.enbl_extnd_hiber = 1;
++				DWC_MODIFY_REG32(core_if->pcgcctl, pcgcctl.d32, 0);
++
++				/* The core will be in ON STATE */
++				core_if->lx_state = DWC_OTG_L0;
++				core_if->xhib = 0;
++
++				DWC_SPINUNLOCK(core_if->lock);
++				if (core_if->pcd_cb && core_if->pcd_cb->resume_wakeup) {
++					core_if->pcd_cb->resume_wakeup(core_if->pcd_cb->p);
++				}
++				DWC_SPINLOCK(core_if->lock);
++
++			}
++
 +			gintsts.b.restoredone = 1;
 +			DWC_WRITE_REG32(&core_if->core_global_regs->gintsts,gintsts.d32);
 +			DWC_PRINTF(" --Restore done interrupt received-- \n");
@@ -58195,16 +58468,16 @@ index 0000000..edc5c92
 +	return retval;
 +}
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_core_if.h b/drivers/usb/host/dwc_otg/dwc_otg_core_if.h
-new file mode 100755
-index 0000000..3207cb6
+new file mode 100644
+index 0000000..10b68c4
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_core_if.h
 @@ -0,0 +1,705 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_core_if.h $
-+ * $Revision: #12 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871159 $
++ * $Revision: #13 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -58906,7 +59179,7 @@ index 0000000..3207cb6
 +
 +#endif				/* __DWC_CORE_IF_H__ */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_dbg.h b/drivers/usb/host/dwc_otg/dwc_otg_dbg.h
-new file mode 100755
+new file mode 100644
 index 0000000..8681aa9
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_dbg.h
@@ -59028,16 +59301,16 @@ index 0000000..8681aa9
 +#endif /*DEBUG*/
 +#endif
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_driver.c b/drivers/usb/host/dwc_otg/dwc_otg_driver.c
-new file mode 100755
-index 0000000..d7be7ef
+new file mode 100644
+index 0000000..8ddc9ae
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_driver.c
-@@ -0,0 +1,1699 @@
+@@ -0,0 +1,1700 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_driver.c $
-+ * $Revision: #91 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871159 $
++ * $Revision: #92 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -59092,7 +59365,7 @@ index 0000000..d7be7ef
 +#include "dwc_otg_pcd_if.h"
 +#include "dwc_otg_hcd_if.h"
 +
-+#define DWC_DRIVER_VERSION	"2.94b 27-OCT-2011 (rev 01-DEC-2011)"
++#define DWC_DRIVER_VERSION	"3.00a 10-AUG-2012"
 +#define DWC_DRIVER_DESC		"HS OTG USB Controller driver"
 +
 +bool microframe_schedule;
@@ -59871,11 +60144,12 @@ index 0000000..d7be7ef
 +	/*
 +	 * Attempt to ensure this device is really a DWC_otg Controller.
 +	 * Read and verify the SNPSID register contents. The value should be
-+	 * 0x45F42XXX, which corresponds to "OT2", as in "OTG version 2.XX".
++	 * 0x45F42XXX or 0x45F42XXX, which corresponds to either "OT2" or "OTG3",
++	 * as in "OTG version 2.XX" or "OTG version 3.XX".
 +	 */
 +
-+	if ((dwc_otg_get_gsnpsid(dwc_otg_device->core_if) & 0xFFFFF000) !=
-+	    0x4F542000) {
++	if (((dwc_otg_get_gsnpsid(dwc_otg_device->core_if) & 0xFFFFF000) !=	0x4F542000) &&
++		((dwc_otg_get_gsnpsid(dwc_otg_device->core_if) & 0xFFFFF000) != 0x4F543000)) {
 +		dev_err(&_dev->dev, "Bad value for SNPSID: 0x%08x\n",
 +			dwc_otg_get_gsnpsid(dwc_otg_device->core_if));
 +		retval = -EINVAL;
@@ -60733,7 +61007,7 @@ index 0000000..d7be7ef
 +
 +*/
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_driver.h b/drivers/usb/host/dwc_otg/dwc_otg_driver.h
-new file mode 100755
+new file mode 100644
 index 0000000..8a0e41b
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_driver.h
@@ -60825,7 +61099,7 @@ index 0000000..8a0e41b
 +
 +#endif
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_hcd.c b/drivers/usb/host/dwc_otg/dwc_otg_hcd.c
-new file mode 100755
+new file mode 100644
 index 0000000..434d0c4
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_hcd.c
@@ -64304,7 +64578,7 @@ index 0000000..434d0c4
 +
 +#endif /* DWC_DEVICE_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_hcd.h b/drivers/usb/host/dwc_otg/dwc_otg_hcd.h
-new file mode 100755
+new file mode 100644
 index 0000000..8075595
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_hcd.h
@@ -65134,7 +65408,7 @@ index 0000000..8075595
 +#endif
 +#endif /* DWC_DEVICE_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_hcd_ddma.c b/drivers/usb/host/dwc_otg/dwc_otg_hcd_ddma.c
-new file mode 100755
+new file mode 100644
 index 0000000..d0d5fa1
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_hcd_ddma.c
@@ -66273,7 +66547,7 @@ index 0000000..d0d5fa1
 +
 +#endif /* DWC_DEVICE_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_hcd_if.h b/drivers/usb/host/dwc_otg/dwc_otg_hcd_if.h
-new file mode 100755
+new file mode 100644
 index 0000000..b3dc806
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_hcd_if.h
@@ -66691,7 +66965,7 @@ index 0000000..b3dc806
 +#endif /* __DWC_HCD_IF_H__ */
 +#endif /* DWC_DEVICE_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_hcd_intr.c b/drivers/usb/host/dwc_otg/dwc_otg_hcd_intr.c
-new file mode 100755
+new file mode 100644
 index 0000000..63c1b55
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_hcd_intr.c
@@ -68803,7 +69077,7 @@ index 0000000..63c1b55
 +
 +#endif /* DWC_DEVICE_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_hcd_linux.c b/drivers/usb/host/dwc_otg/dwc_otg_hcd_linux.c
-new file mode 100755
+new file mode 100644
 index 0000000..4a985a6
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_hcd_linux.c
@@ -69702,7 +69976,7 @@ index 0000000..4a985a6
 +
 +#endif /* DWC_DEVICE_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_hcd_queue.c b/drivers/usb/host/dwc_otg/dwc_otg_hcd_queue.c
-new file mode 100755
+new file mode 100644
 index 0000000..08c1669
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_hcd_queue.c
@@ -70630,7 +70904,7 @@ index 0000000..08c1669
 +
 +#endif /* DWC_DEVICE_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_os_dep.h b/drivers/usb/host/dwc_otg/dwc_otg_os_dep.h
-new file mode 100755
+new file mode 100644
 index 0000000..a7e9076
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_os_dep.h
@@ -70821,16 +71095,16 @@ index 0000000..a7e9076
 +
 +#endif /* _DWC_OS_DEP_H_ */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_pcd.c b/drivers/usb/host/dwc_otg/dwc_otg_pcd.c
-new file mode 100755
-index 0000000..2f9642d
+new file mode 100644
+index 0000000..c97d65c
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_pcd.c
-@@ -0,0 +1,2704 @@
+@@ -0,0 +1,2708 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_pcd.c $
-+ * $Revision: #99 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871160 $
++ * $Revision: #101 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -71281,8 +71555,8 @@ index 0000000..2f9642d
 +		fifosize_data_t txfifosize, rxfifosize;
 +
 +		txfifosize.d32 =
-+		    DWC_READ_REG32(&core_if->dev_if->
-+				   in_ep_regs[dwc_ep->num]->dtxfsts);
++		    DWC_READ_REG32(&core_if->dev_if->in_ep_regs[dwc_ep->num]->
++				   dtxfsts);
 +		rxfifosize.d32 =
 +		    DWC_READ_REG32(&core_if->core_global_regs->grxfsiz);
 +
@@ -71402,15 +71676,13 @@ index 0000000..2f9642d
 +			deptsiz.b.xfersize = ep->xfer_len;
 +			deptsiz.b.pktcnt =
 +			    (ep->xfer_len - 1 + ep->maxpacket) / ep->maxpacket;
-+			DWC_WRITE_REG32(&core_if->dev_if->
-+					in_ep_regs[ep->num]->dieptsiz,
-+					deptsiz.d32);
++			DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[ep->num]->
++					dieptsiz, deptsiz.d32);
 +
 +			/* Write the DMA register */
 +			DWC_WRITE_REG32(&
-+					(core_if->dev_if->
-+					 in_ep_regs[ep->num]->diepdma),
-+					(uint32_t) ep->dma_addr);
++					(core_if->dev_if->in_ep_regs[ep->num]->
++					 diepdma), (uint32_t) ep->dma_addr);
 +
 +		} else {
 +			deptsiz.b.pktcnt =
@@ -71418,15 +71690,13 @@ index 0000000..2f9642d
 +			    ep->maxpacket;
 +			deptsiz.b.xfersize = deptsiz.b.pktcnt * ep->maxpacket;
 +
-+			DWC_WRITE_REG32(&core_if->dev_if->
-+					out_ep_regs[ep->num]->doeptsiz,
-+					deptsiz.d32);
++			DWC_WRITE_REG32(&core_if->dev_if->out_ep_regs[ep->num]->
++					doeptsiz, deptsiz.d32);
 +
 +			/* Write the DMA register */
 +			DWC_WRITE_REG32(&
-+					(core_if->dev_if->
-+					 out_ep_regs[ep->num]->doepdma),
-+					(uint32_t) ep->dma_addr);
++					(core_if->dev_if->out_ep_regs[ep->num]->
++					 doepdma), (uint32_t) ep->dma_addr);
 +
 +		}
 +		/** Enable endpoint, clear nak  */
@@ -71464,11 +71734,11 @@ index 0000000..2f9642d
 +				dwc_otg_iso_ep_start_buf_transfer(core_if, ep);
 +			} else {
 +				ep->cur_pkt_addr =
-+				    (ep->proc_buf_num) ? ep->
-+				    xfer_buff1 : ep->xfer_buff0;
++				    (ep->proc_buf_num) ? ep->xfer_buff1 : ep->
++				    xfer_buff0;
 +				ep->cur_pkt_dma_addr =
-+				    (ep->proc_buf_num) ? ep->
-+				    dma_addr1 : ep->dma_addr0;
++				    (ep->proc_buf_num) ? ep->dma_addr1 : ep->
++				    dma_addr0;
 +				dwc_otg_iso_ep_start_frm_transfer(core_if, ep);
 +			}
 +		}
@@ -71842,14 +72112,16 @@ index 0000000..2f9642d
 +			/* Power off the core */
 +			if (core_if->power_down == 2) {
 +				gpwrdn.b.pwrdnswtch = 1;
-+				DWC_MODIFY_REG32(&core_if->core_global_regs->
-+					gpwrdn, gpwrdn.d32, 0);
++				DWC_MODIFY_REG32(&core_if->
++						 core_global_regs->gpwrdn,
++						 gpwrdn.d32, 0);
 +			}
 +
 +			gpwrdn.d32 = 0;
 +			gpwrdn.b.pmuintsel = 1;
 +			gpwrdn.b.pmuactv = 1;
-+			DWC_MODIFY_REG32(&core_if->core_global_regs->gpwrdn, 0, gpwrdn.d32);
++			DWC_MODIFY_REG32(&core_if->core_global_regs->gpwrdn, 0,
++					 gpwrdn.d32);
 +			dwc_otg_adp_probe_start(core_if);
 +		} else {
 +			DWC_PRINTF("SRP Timeout BSESSVLD = 1\n");
@@ -72008,19 +72280,18 @@ index 0000000..2f9642d
 +
 +		if (GET_CORE_IF(pcd)->dma_desc_enable) {
 +			dev_if->setup_desc_addr[0] =
-+			    dwc_otg_ep_alloc_desc_chain(&dev_if->
-+							dma_setup_desc_addr[0],
-+							1);
++			    dwc_otg_ep_alloc_desc_chain
++			    (&dev_if->dma_setup_desc_addr[0], 1);
 +			dev_if->setup_desc_addr[1] =
-+			    dwc_otg_ep_alloc_desc_chain(&dev_if->
-+							dma_setup_desc_addr[1],
-+							1);
++			    dwc_otg_ep_alloc_desc_chain
++			    (&dev_if->dma_setup_desc_addr[1], 1);
 +			dev_if->in_desc_addr =
-+			    dwc_otg_ep_alloc_desc_chain(&dev_if->
-+							dma_in_desc_addr, 1);
++			    dwc_otg_ep_alloc_desc_chain
++			    (&dev_if->dma_in_desc_addr, 1);
 +			dev_if->out_desc_addr =
-+			    dwc_otg_ep_alloc_desc_chain(&dev_if->
-+							dma_out_desc_addr, 1);
++			    dwc_otg_ep_alloc_desc_chain
++			    (&dev_if->dma_out_desc_addr, 1);
++			pcd->data_terminated = 0;
 +
 +			if (dev_if->setup_desc_addr[0] == 0
 +			    || dev_if->setup_desc_addr[1] == 0
@@ -72028,31 +72299,21 @@ index 0000000..2f9642d
 +			    || dev_if->out_desc_addr == 0) {
 +
 +				if (dev_if->out_desc_addr)
-+					dwc_otg_ep_free_desc_chain(dev_if->
-+								   out_desc_addr,
-+								   dev_if->
-+								   dma_out_desc_addr,
-+								   1);
++					dwc_otg_ep_free_desc_chain
++					    (dev_if->out_desc_addr,
++					     dev_if->dma_out_desc_addr, 1);
 +				if (dev_if->in_desc_addr)
-+					dwc_otg_ep_free_desc_chain(dev_if->
-+								   in_desc_addr,
-+								   dev_if->
-+								   dma_in_desc_addr,
-+								   1);
++					dwc_otg_ep_free_desc_chain
++					    (dev_if->in_desc_addr,
++					     dev_if->dma_in_desc_addr, 1);
 +				if (dev_if->setup_desc_addr[1])
-+					dwc_otg_ep_free_desc_chain(dev_if->
-+								   setup_desc_addr
-+								   [1],
-+								   dev_if->
-+								   dma_setup_desc_addr
-+								   [1], 1);
++					dwc_otg_ep_free_desc_chain
++					    (dev_if->setup_desc_addr[1],
++					     dev_if->dma_setup_desc_addr[1], 1);
 +				if (dev_if->setup_desc_addr[0])
-+					dwc_otg_ep_free_desc_chain(dev_if->
-+								   setup_desc_addr
-+								   [0],
-+								   dev_if->
-+								   dma_setup_desc_addr
-+								   [0], 1);
++					dwc_otg_ep_free_desc_chain
++					    (dev_if->setup_desc_addr[0],
++					     dev_if->dma_setup_desc_addr[0], 1);
 +
 +				DWC_DMA_FREE(sizeof(*pcd->setup_pkt) * 5,
 +					     pcd->setup_pkt,
@@ -72378,20 +72639,23 @@ index 0000000..2f9642d
 +		}
 +
 +		/* Calculating EP info controller base address */
-+		if (ep->dwc_ep.tx_fifo_num && GET_CORE_IF(pcd)->en_multiple_tx_fifo) {
++		if (ep->dwc_ep.tx_fifo_num
++		    && GET_CORE_IF(pcd)->en_multiple_tx_fifo) {
 +			gdfifocfg.d32 =
-+			    DWC_READ_REG32(&GET_CORE_IF(pcd)->core_global_regs->
-+					   gdfifocfg);
++			    DWC_READ_REG32(&GET_CORE_IF(pcd)->
++					   core_global_regs->gdfifocfg);
 +			gdfifocfgbase.d32 = gdfifocfg.d32 >> 16;
 +			dptxfsiz.d32 =
 +			    (DWC_READ_REG32
-+			     (&GET_CORE_IF(pcd)->
-+			      core_global_regs->dtxfsiz[ep->dwc_ep.
-+							tx_fifo_num-1]) >> 16);
++			     (&GET_CORE_IF(pcd)->core_global_regs->
++			      dtxfsiz[ep->dwc_ep.tx_fifo_num - 1]) >> 16);
 +			gdfifocfg.b.epinfobase =
 +			    gdfifocfgbase.d32 + dptxfsiz.d32;
-+			DWC_WRITE_REG32(&GET_CORE_IF(pcd)->core_global_regs->
-+					gdfifocfg, gdfifocfg.d32);
++			if (GET_CORE_IF(pcd)->snpsid <= OTG_CORE_REV_2_94a) {
++				DWC_WRITE_REG32(&GET_CORE_IF(pcd)->
++						core_global_regs->gdfifocfg,
++						gdfifocfg.d32);
++			}
 +		}
 +	}
 +	/* Set initial data PID. */
@@ -72471,8 +72735,7 @@ index 0000000..2f9642d
 +	dwc_otg_request_nuke(ep);
 +
 +	dwc_otg_ep_deactivate(GET_CORE_IF(pcd), &ep->dwc_ep);
-+	if (pcd->core_if->core_params->dev_out_nak)
-+	{
++	if (pcd->core_if->core_params->dev_out_nak) {
 +		DWC_TIMER_CANCEL(pcd->core_if->ep_xfer_timer[ep->dwc_ep.num]);
 +		pcd->core_if->ep_xfer_info[ep->dwc_ep.num].state = 0;
 +	}
@@ -72486,7 +72749,8 @@ index 0000000..2f9642d
 +	if (ep->dwc_ep.is_in) {
 +		if (GET_CORE_IF(pcd)->en_multiple_tx_fifo) {
 +			/* Flush the Tx FIFO */
-+			dwc_otg_flush_tx_fifo(GET_CORE_IF(pcd), ep->dwc_ep.tx_fifo_num);
++			dwc_otg_flush_tx_fifo(GET_CORE_IF(pcd),
++					      ep->dwc_ep.tx_fifo_num);
 +		}
 +		release_perio_tx_fifo(GET_CORE_IF(pcd), ep->dwc_ep.tx_fifo_num);
 +		release_tx_fifo(GET_CORE_IF(pcd), ep->dwc_ep.tx_fifo_num);
@@ -72497,8 +72761,10 @@ index 0000000..2f9642d
 +			     (&GET_CORE_IF(pcd)->
 +		      		core_global_regs->dtxfsiz[ep->dwc_ep.tx_fifo_num-1]) >> 16);
 +			gdfifocfg.b.epinfobase = gdfifocfgbase.d32 - dptxfsiz.d32;
-+			DWC_WRITE_REG32(&GET_CORE_IF(pcd)->core_global_regs->gdfifocfg,
++			if (GET_CORE_IF(pcd)->snpsid <= OTG_CORE_REV_2_94a) {
++				DWC_WRITE_REG32(&GET_CORE_IF(pcd)->core_global_regs->gdfifocfg,
 +					gdfifocfg.d32);
++			}
 +		}
 +	}
 +
@@ -72584,7 +72850,8 @@ index 0000000..2f9642d
 +			for (i = 0; i < ereq->pio_pkt_count; i++) {
 +				//if ((i % (nat + 1)) == 0)
 +				if ( i > 0 )
-+					dwcep->xiso_frame_num = (dwcep->xiso_bInterval +
++					dwcep->xiso_frame_num =
++					    (dwcep->xiso_bInterval +
 +										dwcep->xiso_frame_num) & 0x3FFF;
 +				dwcep->desc_addr[i].buf =
 +				    req->dma + ddesc_iso[i].offset;
@@ -72651,15 +72918,15 @@ index 0000000..2f9642d
 +			
 +			/* Setup and start the transfer for this endpoint */
 +			dwcep->xiso_active_xfers++;
-+			DWC_WRITE_REG32(&GET_CORE_IF(pcd)->dev_if->
-+					out_ep_regs[dwcep->num]->doepdma,
-+					dwcep->dma_desc_addr);
++			DWC_WRITE_REG32(&GET_CORE_IF(pcd)->
++					dev_if->out_ep_regs[dwcep->num]->
++					doepdma, dwcep->dma_desc_addr);
 +			diepctl.d32 = 0;
 +			diepctl.b.epena = 1;
 +			diepctl.b.cnak = 1;
-+			DWC_MODIFY_REG32(&GET_CORE_IF(pcd)->dev_if->
-+					 out_ep_regs[dwcep->num]->doepctl, 0,
-+					 diepctl.d32);
++			DWC_MODIFY_REG32(&GET_CORE_IF(pcd)->
++					 dev_if->out_ep_regs[dwcep->num]->
++					 doepctl, 0, diepctl.d32);
 +		}
 +
 +	} else {
@@ -72956,17 +73223,20 @@ index 0000000..2f9642d
 +	 * Received when EP is disabled interrupt to obtain starting microframe
 +	 * (odd/even) start transfer
 +	 */
-+	if (ep->dwc_ep.type == DWC_OTG_EP_TYPE_ISOC)
-+	{
++	if (ep->dwc_ep.type == DWC_OTG_EP_TYPE_ISOC) {
 +		if (req != 0) {
-+			depctl_data_t depctl = {.d32 = DWC_READ_REG32(&pcd->core_if->dev_if->in_ep_regs[ep->dwc_ep.num]->diepctl)};
++			depctl_data_t depctl = {.d32 =
++				    DWC_READ_REG32(&pcd->core_if->dev_if->
++						   in_ep_regs[ep->dwc_ep.num]->
++						   diepctl) };
 +			++pcd->request_pending;
 +
 +			DWC_CIRCLEQ_INSERT_TAIL(&ep->queue, req, queue_entry);
-+			if (ep->dwc_ep.is_in)
-+			{
++			if (ep->dwc_ep.is_in) {
 +				depctl.b.cnak = 1;
-+				DWC_WRITE_REG32(&pcd->core_if->dev_if->in_ep_regs[ep->dwc_ep.num]->diepctl, depctl.d32);
++				DWC_WRITE_REG32(&pcd->core_if->dev_if->
++						in_ep_regs[ep->dwc_ep.num]->
++						diepctl, depctl.d32);
 +			}
 +			
 +			DWC_SPINUNLOCK_IRQRESTORE(pcd->lock, flags);
@@ -73047,16 +73317,20 @@ index 0000000..2f9642d
 +			} else {
 +#endif
 +				max_transfer =
-+				    GET_CORE_IF(ep->pcd)->
-+				    core_params->max_transfer_size;
++				    GET_CORE_IF(ep->pcd)->core_params->
++				    max_transfer_size;
 +
 +				/* Setup and start the Transfer */
 +				if (req->dw_align_buf){
 +					if (ep->dwc_ep.is_in)
-+						dwc_memcpy(req->dw_align_buf, buf, buflen);
-+					ep->dwc_ep.dma_addr = req->dw_align_buf_dma;
-+					ep->dwc_ep.start_xfer_buff = req->dw_align_buf;
-+                                        ep->dwc_ep.xfer_buff = req->dw_align_buf;
++						dwc_memcpy(req->dw_align_buf,
++							   buf, buflen);
++					ep->dwc_ep.dma_addr =
++					    req->dw_align_buf_dma;
++					ep->dwc_ep.start_xfer_buff =
++					    req->dw_align_buf;
++					ep->dwc_ep.xfer_buff =
++					    req->dw_align_buf;
 +				} else {
 +					ep->dwc_ep.dma_addr = dma_buf;
 +					ep->dwc_ep.start_xfer_buff = buf;
@@ -73116,14 +73390,14 @@ index 0000000..2f9642d
 +			diepmsk_data_t diepmsk = {.d32 = 0 };
 +			diepmsk.b.intktxfemp = 1;
 +			if (GET_CORE_IF(pcd)->multiproc_int_enable) {
-+				DWC_MODIFY_REG32(&GET_CORE_IF(pcd)->dev_if->
-+						 dev_global_regs->
-+						 diepeachintmsk[ep->dwc_ep.num],
-+						 0, diepmsk.d32);
-+			} else {
-+				DWC_MODIFY_REG32(&GET_CORE_IF(pcd)->dev_if->
-+						 dev_global_regs->diepmsk, 0,
++				DWC_MODIFY_REG32(&GET_CORE_IF(pcd)->
++						 dev_if->dev_global_regs->diepeachintmsk
++						 [ep->dwc_ep.num], 0,
 +						 diepmsk.d32);
++			} else {
++				DWC_MODIFY_REG32(&GET_CORE_IF(pcd)->
++						 dev_if->dev_global_regs->
++						 diepmsk, 0, diepmsk.d32);
 +			}
 +
 +		}
@@ -73207,11 +73481,13 @@ index 0000000..2f9642d
 +			fifosize_data_t txfifosize;
 +
 +			txfifosize.d32 =
-+			    DWC_READ_REG32(&GET_CORE_IF(pcd)->core_global_regs->
-+					   dtxfsiz[ep->dwc_ep.tx_fifo_num]);
++			    DWC_READ_REG32(&GET_CORE_IF(pcd)->
++					   core_global_regs->dtxfsiz[ep->dwc_ep.
++								     tx_fifo_num]);
 +			txstatus.d32 =
-+			    DWC_READ_REG32(&GET_CORE_IF(pcd)->dev_if->
-+					   in_ep_regs[ep->dwc_ep.num]->dtxfsts);
++			    DWC_READ_REG32(&GET_CORE_IF(pcd)->
++					   dev_if->in_ep_regs[ep->dwc_ep.num]->
++					   dtxfsts);
 +
 +			if (txstatus.b.txfspcavail < txfifosize.b.depth) {
 +				DWC_WARN("%s() Data In Tx Fifo\n", __func__);
@@ -73329,14 +73605,16 @@ index 0000000..2f9642d
 +				/* Mask SRP detected interrupt from Power Down Logic */
 +				gpwrdn.d32 = 0;
 +				gpwrdn.b.srp_det_msk = 1;
-+				DWC_MODIFY_REG32(&core_if->core_global_regs->
-+						 gpwrdn, gpwrdn.d32, 0);
++				DWC_MODIFY_REG32(&core_if->
++						 core_global_regs->gpwrdn,
++						 gpwrdn.d32, 0);
 +
 +				/* Disable Power Down Logic */
 +				gpwrdn.d32 = 0;
 +				gpwrdn.b.pmuactv = 1;
-+				DWC_MODIFY_REG32(&core_if->core_global_regs->
-+						 gpwrdn, gpwrdn.d32, 0);
++				DWC_MODIFY_REG32(&core_if->
++						 core_global_regs->gpwrdn,
++						 gpwrdn.d32, 0);
 +
 +				/*
 +				 * Initialize the Core for Device mode.
@@ -73350,13 +73628,13 @@ index 0000000..2f9642d
 +			}
 +
 +			dctl.b.rmtwkupsig = 1;
-+			DWC_MODIFY_REG32(&core_if->dev_if->
-+					 dev_global_regs->dctl, 0, dctl.d32);
++			DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->
++					 dctl, 0, dctl.d32);
 +			DWC_DEBUGPL(DBG_PCD, "Set Remote Wakeup\n");
 +
 +			dwc_mdelay(2);
-+			DWC_MODIFY_REG32(&core_if->dev_if->
-+					 dev_global_regs->dctl, dctl.d32, 0);
++			DWC_MODIFY_REG32(&core_if->dev_if->dev_global_regs->
++					 dctl, dctl.d32, 0);
 +			DWC_DEBUGPL(DBG_PCD, "Clear Remote Wakeup\n");
 +		}
 +	} else {
@@ -73531,16 +73809,16 @@ index 0000000..2f9642d
 +
 +#endif /* DWC_HOST_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_pcd.h b/drivers/usb/host/dwc_otg/dwc_otg_pcd.h
-new file mode 100755
-index 0000000..4b2dde9
+new file mode 100644
+index 0000000..8ef7ba6
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_pcd.h
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,266 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_pcd.h $
-+ * $Revision: #46 $
-+ * $Date: 2011/10/20 $
-+ * $Change: 1870124 $
++ * $Revision: #48 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -73753,6 +74031,10 @@ index 0000000..4b2dde9
 +
 +	dwc_dma_t setup_pkt_dma_handle;
 +
++	/* Additional buffer and flag for CTRL_WR premature case */
++	uint8_t *backup_buf;
++	unsigned data_terminated;
++
 +	/** 2-byte dma buffer used to return status from GET_STATUS */
 +	uint16_t *status_buf;
 +	dwc_dma_t status_buf_dma_handle;
@@ -73799,7 +74081,7 @@ index 0000000..4b2dde9
 +#endif
 +#endif /* DWC_HOST_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_pcd_if.h b/drivers/usb/host/dwc_otg/dwc_otg_pcd_if.h
-new file mode 100755
+new file mode 100644
 index 0000000..c8d2e0e
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_pcd_if.h
@@ -74165,16 +74447,16 @@ index 0000000..c8d2e0e
 +
 +#endif				/* DWC_HOST_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_pcd_intr.c b/drivers/usb/host/dwc_otg/dwc_otg_pcd_intr.c
-new file mode 100755
-index 0000000..4a6520f
+new file mode 100644
+index 0000000..27061d3
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_pcd_intr.c
-@@ -0,0 +1,4817 @@
+@@ -0,0 +1,5147 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_pcd_intr.c $
-+ * $Revision: #113 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871160 $
++ * $Revision: #116 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -74913,6 +75195,12 @@ index 0000000..4a6520f
 +	DWC_DEBUGPL(DBG_PCDV, "%s() doepctl0=%0x\n", __func__,
 +		    DWC_READ_REG32(&dev_if->out_ep_regs[0]->doepctl));
 +#endif
++	if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++		doepctl.d32 = DWC_READ_REG32(&dev_if->out_ep_regs[0]->doepctl);
++		if (doepctl.b.epena) {
++			return;
++		}
++	}
 +
 +	doeptsize0.b.supcnt = 3;
 +	doeptsize0.b.pktcnt = 1;
@@ -74935,6 +75223,10 @@ index 0000000..4a6520f
 +
 +			/** DMA Descriptor Setup */
 +			dma_desc->status.b.bs = BS_HOST_BUSY;
++			if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++				dma_desc->status.b.sr = 0;
++				dma_desc->status.b.mtrf = 0;
++			}
 +			dma_desc->status.b.l = 1;
 +			dma_desc->status.b.ioc = 1;
 +			dma_desc->status.b.bytes = pcd->ep0.dwc_ep.maxpacket;
@@ -74944,8 +75236,7 @@ index 0000000..4a6520f
 +
 +			/** DOEPDMA0 Register write */
 +			DWC_WRITE_REG32(&dev_if->out_ep_regs[0]->doepdma,
-+					dev_if->
-+					dma_setup_desc_addr
++					dev_if->dma_setup_desc_addr
 +					[dev_if->setup_desc_index]);
 +		}
 +
@@ -74955,10 +75246,15 @@ index 0000000..4a6520f
 +				doeptsize0.d32);
 +	}
 +
-+	/** DOEPCTL0 Register write */
++	/** DOEPCTL0 Register write cnak will be set after setup interrupt */
++	doepctl.d32 = 0;
 +	doepctl.b.epena = 1;
++	if (core_if->snpsid <= OTG_CORE_REV_2_94a) {
 +	doepctl.b.cnak = 1;
 +	DWC_WRITE_REG32(&dev_if->out_ep_regs[0]->doepctl, doepctl.d32);
++	} else {
++		DWC_MODIFY_REG32(&dev_if->out_ep_regs[0]->doepctl, 0, doepctl.d32);
++	}
 +
 +#ifdef VERBOSE
 +	DWC_DEBUGPL(DBG_PCDV, "doepctl0=%0x\n",
@@ -75070,7 +75366,8 @@ index 0000000..4a6520f
 +		dcfg.b.epmscnt = 2;
 +		DWC_WRITE_REG32(&dev_if->dev_global_regs->dcfg, dcfg.d32);
 +
-+		DWC_DEBUGPL(DBG_PCDV,"%s first_in_nextep_seq= %2d; nextep_seq[]:\n", 
++		DWC_DEBUGPL(DBG_PCDV,
++			    "%s first_in_nextep_seq= %2d; nextep_seq[]:\n",
 +			__func__, core_if->first_in_nextep_seq);
 +		for (i=0; i <= core_if->dev_if->num_in_eps; i++) {
 +			DWC_DEBUGPL(DBG_PCDV, "%2d\n", core_if->nextep_seq[i]);
@@ -75088,10 +75385,13 @@ index 0000000..4a6520f
 +		doepmsk.b.ahberr = 1;
 +		doepmsk.b.epdisabled = 1;
 +
-+		if (core_if->dma_desc_enable) {
++		if ((core_if->dma_desc_enable) ||
++		    (core_if->dma_enable
++		     && core_if->snpsid >= OTG_CORE_REV_3_00a)) {
 +			doepmsk.b.stsphsercvd = 1;
-+			doepmsk.b.bna = 1;
 +		}
++		if (core_if->dma_desc_enable)
++			doepmsk.b.bna = 1;
 +/*		
 +		doepmsk.b.babble = 1;
 +		doepmsk.b.nyet = 1;
@@ -75133,10 +75433,13 @@ index 0000000..4a6520f
 +		doepmsk.b.ahberr = 1;
 +		doepmsk.b.epdisabled = 1;
 +
-+		if (core_if->dma_desc_enable) {
++		if ((core_if->dma_desc_enable) ||
++		    (core_if->dma_enable
++		     && core_if->snpsid >= OTG_CORE_REV_3_00a)) {
 +			doepmsk.b.stsphsercvd = 1;
-+			doepmsk.b.bna = 1;
 +		}
++		if (core_if->dma_desc_enable)
++			doepmsk.b.bna = 1;
 +		DWC_WRITE_REG32(&dev_if->dev_global_regs->doepmsk, doepmsk.d32);
 +
 +		diepmsk.b.xfercompl = 1;
@@ -75160,7 +75463,8 @@ index 0000000..4a6520f
 +	DWC_WRITE_REG32(&dev_if->dev_global_regs->dcfg, dcfg.d32);
 +
 +	/* setup EP0 to receive SETUP packets */
-+	ep0_out_start(core_if, pcd);
++	if (core_if->snpsid <= OTG_CORE_REV_2_94a)
++		ep0_out_start(core_if, pcd);
 +
 +	/* Clear interrupt */
 +	gintsts.d32 = 0;
@@ -75223,6 +75527,9 @@ index 0000000..4a6520f
 +		utmi8b = 8;
 +	}
 +	dwc_otg_ep0_activate(GET_CORE_IF(pcd), &ep0->dwc_ep);
++	if (GET_CORE_IF(pcd)->snpsid >= OTG_CORE_REV_3_00a) {
++		ep0_out_start(GET_CORE_IF(pcd), pcd);
++	}
 +
 +#ifdef DEBUG_EP0
 +	print_ep0_state(pcd);
@@ -75513,6 +75820,14 @@ index 0000000..4a6520f
 +
 +	/* Prepare for more SETUP Packets */
 +	DWC_DEBUGPL(DBG_PCD, "EP0 IN ZLP\n");
++	if ((GET_CORE_IF(pcd)->snpsid >= OTG_CORE_REV_3_00a)
++	    && (pcd->core_if->dma_desc_enable)
++	    && (ep0->dwc_ep.xfer_count < ep0->dwc_ep.total_len)) {
++		DWC_DEBUGPL(DBG_PCDV,
++			    "Data terminated wait next packet in out_desc_addr\n");
++		pcd->backup_buf = phys_to_virt(ep0->dwc_ep.dma_addr);
++		pcd->data_terminated = 1;
++	}
 +	ep0->dwc_ep.xfer_len = 0;
 +	ep0->dwc_ep.xfer_count = 0;
 +	ep0->dwc_ep.is_in = 1;
@@ -75650,20 +75965,25 @@ index 0000000..4a6520f
 +		if(UGETW(ctrl.wIndex) == 0xF000) { /* OTG Status selector */
 +			DWC_PRINTF("wIndex - %d\n", UGETW(ctrl.wIndex));
 +			DWC_PRINTF("OTG VERSION - %d\n", core_if->otg_ver);
-+			DWC_PRINTF("OTG CAP - %d, %d\n", core_if->core_params->otg_cap,
++			DWC_PRINTF("OTG CAP - %d, %d\n",
++				   core_if->core_params->otg_cap,
 +						DWC_OTG_CAP_PARAM_HNP_SRP_CAPABLE);
-+			if(core_if->otg_ver == 1 && 
-+			core_if->core_params->otg_cap == DWC_OTG_CAP_PARAM_HNP_SRP_CAPABLE) {
++			if (core_if->otg_ver == 1
++			    && core_if->core_params->otg_cap ==
++			    DWC_OTG_CAP_PARAM_HNP_SRP_CAPABLE) {
 +				uint8_t *otgsts = (uint8_t*)pcd->status_buf;
 +				*otgsts = (core_if->otg_sts & 0x1);
 +				pcd->ep0_pending = 1;
-+				ep0->dwc_ep.start_xfer_buff = (uint8_t *) otgsts;
++				ep0->dwc_ep.start_xfer_buff =
++				    (uint8_t *) otgsts;
 +				ep0->dwc_ep.xfer_buff = (uint8_t *) otgsts;
-+				ep0->dwc_ep.dma_addr = pcd->status_buf_dma_handle;
++				ep0->dwc_ep.dma_addr =
++				    pcd->status_buf_dma_handle;
 +				ep0->dwc_ep.xfer_len = 1;
 +				ep0->dwc_ep.xfer_count = 0;
 +				ep0->dwc_ep.total_len = ep0->dwc_ep.xfer_len;
-+				dwc_otg_ep0_start_transfer(GET_CORE_IF(pcd), &ep0->dwc_ep);
++				dwc_otg_ep0_start_transfer(GET_CORE_IF(pcd),
++							   &ep0->dwc_ep);
 +				return;
 +			} else {
 +				ep0_do_stall(pcd, -DWC_E_NOT_SUPPORTED);
@@ -75939,22 +76259,28 @@ index 0000000..4a6520f
 +	struct cfi_usb_ctrlrequest cfi_req;
 +#endif
 +
++	doeptsize0.d32 = DWC_READ_REG32(&dev_if->out_ep_regs[0]->doeptsiz);
++
++	/** In BDMA more then 1 setup packet is not supported till 3.00a */
++	if (core_if->dma_enable && core_if->dma_desc_enable == 0
++	    && (doeptsize0.b.supcnt < 2)
++	    && (core_if->snpsid < OTG_CORE_REV_2_94a)) {
++		DWC_ERROR
++		    ("\n\n-----------	 CANNOT handle > 1 setup packet in DMA mode\n\n");
++	}
++	if ((core_if->snpsid >= OTG_CORE_REV_3_00a)
++	    && (core_if->dma_enable == 1) && (core_if->dma_desc_enable == 0)) {
++		ctrl =
++		    (pcd->setup_pkt +
++		     (3 - doeptsize0.b.supcnt - 1 +
++		      ep0->dwc_ep.stp_rollover))->req;
++	}
 +#ifdef DEBUG_EP0
 +	DWC_DEBUGPL(DBG_PCD, "SETUP %02x.%02x v%04x i%04x l%04x\n",
 +		    ctrl.bmRequestType, ctrl.bRequest,
 +		    UGETW(ctrl.wValue), UGETW(ctrl.wIndex),
 +		    UGETW(ctrl.wLength));
 +#endif
-+
-+	doeptsize0.d32 = DWC_READ_REG32(&dev_if->out_ep_regs[0]->doeptsiz);
-+
-+	/** @todo handle > 1 setup packet , assert error for now */
-+
-+	if (core_if->dma_enable && core_if->dma_desc_enable == 0
-+	    && (doeptsize0.b.supcnt < 2)) {
-+		DWC_ERROR
-+		    ("\n\n-----------	 CANNOT handle > 1 setup packet in DMA mode\n\n");
-+	}
 +
 +	/* Clean up the request queue */
 +	dwc_otg_request_nuke(ep0);
@@ -76200,8 +76526,18 @@ index 0000000..4a6520f
 +#endif
 +			req->sent_zlp = 0;
 +		}
-+		if (core_if->dma_desc_enable == 0)
++		/* For older cores do setup in status phase in Slave/BDMA modes,
++		 * starting from 3.00 do that only in slave, and for DMA modes
++		 * just re-enable ep 0 OUT here*/
++		if (core_if->dma_enable == 0
++		    || (core_if->dma_desc_enable == 0
++			&& core_if->snpsid <= OTG_CORE_REV_2_94a)) {
 +			do_setup_in_status_phase(pcd);
++		} else if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++			DWC_DEBUGPL(DBG_PCDV,
++				    "Enable out ep before in status phase\n");
++			ep0_out_start(core_if, pcd);
++		}
 +	}
 +
 +	/* Complete the request */
@@ -76341,8 +76677,8 @@ index 0000000..4a6520f
 +						is_last = 1;
 +					}
 +				} else {
-+					if(ep->dwc_ep.type == DWC_OTG_EP_TYPE_ISOC)
-+					{
++					if (ep->dwc_ep.type ==
++					    DWC_OTG_EP_TYPE_ISOC) {
 +						req->actual = 0;
 +						dwc_otg_request_done(ep, req, 0);
 +
@@ -76478,25 +76814,34 @@ index 0000000..4a6520f
 +				 */
 +				if (ep->dwc_ep.type == DWC_OTG_EP_TYPE_INTR &&
 +							(ep->dwc_ep.maxpacket%4)) {
-+					ep->dwc_ep.xfer_count = ep->dwc_ep.total_len - byte_count;
-+					if ((ep->dwc_ep.xfer_len % ep->dwc_ep.maxpacket) &&
-+						(ep->dwc_ep.xfer_len/ep->dwc_ep.maxpacket < MAX_DMA_DESC_CNT))
++					ep->dwc_ep.xfer_count =
++					    ep->dwc_ep.total_len - byte_count;
++					if ((ep->dwc_ep.xfer_len %
++					     ep->dwc_ep.maxpacket)
++					    && (ep->dwc_ep.xfer_len /
++						ep->dwc_ep.maxpacket <
++						MAX_DMA_DESC_CNT))
 +						ep->dwc_ep.xfer_len -=
-+							(ep->dwc_ep.desc_cnt - 1) * ep->dwc_ep.maxpacket +
-+									ep->dwc_ep.xfer_len % ep->dwc_ep.maxpacket;
++						    (ep->dwc_ep.desc_cnt -
++						     1) * ep->dwc_ep.maxpacket +
++						    ep->dwc_ep.xfer_len %
++						    ep->dwc_ep.maxpacket;
 +					else						
 +						ep->dwc_ep.xfer_len -=
-+									ep->dwc_ep.desc_cnt * ep->dwc_ep.maxpacket;
++						    ep->dwc_ep.desc_cnt *
++						    ep->dwc_ep.maxpacket;
 +					if (ep->dwc_ep.xfer_len > 0) {
-+                                        	dwc_otg_ep_start_transfer(core_if,
-+                                                                  &ep->dwc_ep);
++						dwc_otg_ep_start_transfer
++						    (core_if, &ep->dwc_ep);
 +					} else {
 +						is_last = 1;
 +					}
 +				} else {
-+					ep->dwc_ep.xfer_count = ep->dwc_ep.total_len
-+						- byte_count +
-+						((4 - (ep->dwc_ep.total_len & 0x3)) & 0x3);
++					ep->dwc_ep.xfer_count =
++					    ep->dwc_ep.total_len - byte_count +
++					    ((4 -
++					      (ep->dwc_ep.
++					       total_len & 0x3)) & 0x3);
 +					is_last = 1;
 +				}	
 +			} else {
@@ -77096,12 +77441,12 @@ index 0000000..4a6520f
 +
 +	if (ep->is_in) {
 +		deptsiz.d32 =
-+		    DWC_READ_REG32(&core_if->dev_if->
-+				   in_ep_regs[ep->num]->dieptsiz);
++		    DWC_READ_REG32(&core_if->dev_if->in_ep_regs[ep->num]->
++				   dieptsiz);
 +	} else {
 +		deptsiz.d32 =
-+		    DWC_READ_REG32(&core_if->dev_if->
-+				   out_ep_regs[ep->num]->doeptsiz);
++		    DWC_READ_REG32(&core_if->dev_if->out_ep_regs[ep->num]->
++				   doeptsiz);
 +	}
 +
 +	if (!deptsiz.b.xfersize) {
@@ -77240,7 +77585,8 @@ index 0000000..4a6520f
 +	int i, start;
 +
 +	if (!dwc_ep->desc_cnt)
-+		DWC_WARN("Descriptor count = %d\n", dwc_ep->desc_cnt);
++		DWC_WARN("Ep%d %s Descriptor count = %d \n", dwc_ep->num,
++			 (dwc_ep->is_in ? "IN" : "OUT"), dwc_ep->desc_cnt);
 +
 +	if (core_if->core_params->cont_on_bna && !dwc_ep->is_in
 +							&& dwc_ep->type != DWC_OTG_EP_TYPE_CONTROL) {
@@ -77264,8 +77610,8 @@ index 0000000..4a6520f
 +
 +	if (dwc_ep->is_in == 0) {
 +		addr =
-+		    &GET_CORE_IF(pcd)->dev_if->out_ep_regs[dwc_ep->
-+							   num]->doepctl;
++		    &GET_CORE_IF(pcd)->dev_if->out_ep_regs[dwc_ep->num]->
++		    doepctl;
 +	} else {
 +		addr =
 +		    &GET_CORE_IF(pcd)->dev_if->in_ep_regs[dwc_ep->num]->diepctl;
@@ -77278,7 +77624,7 @@ index 0000000..4a6520f
 +/**
 + * This function handles EP0 Control transfers.
 + *
-+ * The state of the control tranfers are tracked in
++ * The state of the control transfers are tracked in
 + * <code>ep0state</code>.
 + */
 +static void handle_ep0(dwc_otg_pcd_t * pcd)
@@ -77346,7 +77692,7 @@ index 0000000..4a6520f
 +			dwc_otg_ep0_continue_transfer(GET_CORE_IF(pcd),
 +						      &ep0->dwc_ep);
 +			ep0->dwc_ep.sent_zlp = 0;
-+			DWC_DEBUGPL(DBG_PCD, "CONTINUE TRANSFER\n");
++			DWC_DEBUGPL(DBG_PCD, "CONTINUE TRANSFER sent zlp\n");
 +		} else {
 +			ep0_complete_request(ep0);
 +			DWC_DEBUGPL(DBG_PCD, "COMPLETE TRANSFER\n");
@@ -77384,7 +77730,7 @@ index 0000000..4a6520f
 +			dwc_otg_ep0_continue_transfer(GET_CORE_IF(pcd),
 +						      &ep0->dwc_ep);
 +			ep0->dwc_ep.sent_zlp = 0;
-+			DWC_DEBUGPL(DBG_PCD, "CONTINUE TRANSFER\n");
++			DWC_DEBUGPL(DBG_PCD, "CONTINUE TRANSFER sent zlp\n");
 +		} else {
 +			ep0_complete_request(ep0);
 +			DWC_DEBUGPL(DBG_PCD, "COMPLETE TRANSFER\n");
@@ -77537,22 +77883,26 @@ index 0000000..4a6520f
 +	if (TOKEN_Q_DEPTH > 6) {
 +		/* Fill intkn_seq[] from in_tkn_epnums[1] */
 +		for (i=6; i < 14; i++) 
-+			intkn_seq[i] = (in_tkn_epnums[1] >> ((7-(i-6)) * 4)) & 0xf;
++			intkn_seq[i] =
++			    (in_tkn_epnums[1] >> ((7 - (i - 6)) * 4)) & 0xf;
 +	}
 +	
 +	if (TOKEN_Q_DEPTH > 14) {
 +		/* Fill intkn_seq[] from in_tkn_epnums[1] */
 +		for (i=14; i < 22; i++) 
-+			intkn_seq[i] = (in_tkn_epnums[2] >> ((7-(i-14)) * 4)) & 0xf;
++			intkn_seq[i] =
++			    (in_tkn_epnums[2] >> ((7 - (i - 14)) * 4)) & 0xf;
 +	}
 +
 +	if (TOKEN_Q_DEPTH > 22) {
 +		/* Fill intkn_seq[] from in_tkn_epnums[1] */
 +		for (i=22; i < 30; i++) 
-+			intkn_seq[i] = (in_tkn_epnums[3] >> ((7-(i-22)) * 4)) & 0xf;
++			intkn_seq[i] =
++			    (in_tkn_epnums[3] >> ((7 - (i - 22)) * 4)) & 0xf;
 +	}
 +
-+	DWC_DEBUGPL(DBG_PCDV,"%s start=%d end=%d intkn_seq[]:\n", __func__, start, end);
++	DWC_DEBUGPL(DBG_PCDV, "%s start=%d end=%d intkn_seq[]:\n", __func__,
++		    start, end);
 +	for (i=0; i<TOKEN_Q_DEPTH; i++) 
 +		DWC_DEBUGPL(DBG_PCDV,"%d\n", intkn_seq[i]);
 +
@@ -77708,7 +78058,8 @@ index 0000000..4a6520f
 +			
 +		/* Update all active IN EP's NextEP field based of nextep_seq[] */
 +		for ( i = 0; i <= core_if->dev_if->num_in_eps; i++) {
-+			depctl.d32 = DWC_READ_REG32(&dev_if->in_ep_regs[i]->diepctl);
++			depctl.d32 =
++			    DWC_READ_REG32(&dev_if->in_ep_regs[i]->diepctl);
 +			if (core_if->nextep_seq[i] != 0xff) {	// Active NP IN EP
 +				depctl.b.nextep = core_if->nextep_seq[i];
 +				DWC_WRITE_REG32(&dev_if->in_ep_regs[i]->diepctl, depctl.d32);
@@ -77901,7 +78252,7 @@ index 0000000..4a6520f
 +	dwc_otg_core_if_t *core_if;
 +	doepmsk_data_t intr_mask = {.d32 = 0 };
 +
-+	DWC_PRINTF("INTERRUPT Handler not implemented for %s\n", "OUT EP NAK");
++	DWC_DEBUGPL(DBG_ANY, "INTERRUPT Handler not implemented for %s\n", "OUT EP NAK");
 +	core_if = GET_CORE_IF(pcd);
 +	intr_mask.b.nak = 1;
 +
@@ -78014,7 +78365,7 @@ index 0000000..4a6520f
 +			/* Transfer complete */
 +			if (diepint.b.xfercompl) {
 +				/* Disable the NP Tx FIFO Empty
-+				 * Interrrupt */
++				 * Interrupt */
 +				if (core_if->en_multiple_tx_fifo == 0) {
 +					intr_mask.b.nptxfempty = 1;
 +					DWC_MODIFY_REG32
@@ -78185,14 +78536,11 @@ index 0000000..4a6520f
 +			if (diepint.b.nak) {
 +				DWC_DEBUGPL(DBG_ANY, "EP%d IN NAK Interrupt\n",
 +					    epnum);
-+				if (ep->dwc_ep.type == DWC_OTG_EP_TYPE_ISOC)
-+				{
++				if (ep->dwc_ep.type == DWC_OTG_EP_TYPE_ISOC) {
 +					depctl_data_t depctl;
-+					if (ep->dwc_ep.frame_num == 0xFFFFFFFF) 
-+					{
++					if (ep->dwc_ep.frame_num == 0xFFFFFFFF) {
 +						ep->dwc_ep.frame_num = core_if->frame_num;
-+						if (ep->dwc_ep.bInterval > 1) 
-+						{
++						if (ep->dwc_ep.bInterval > 1) {
 +							depctl.d32 = 0;
 +							depctl.d32 = DWC_READ_REG32(&dev_if->in_ep_regs[epnum]->diepctl);
 +							if (ep->dwc_ep.frame_num & 0x1) {
@@ -78207,8 +78555,7 @@ index 0000000..4a6520f
 +						start_next_request(ep);
 +					}
 +					ep->dwc_ep.frame_num += ep->dwc_ep.bInterval;
-+					if (dwc_ep->frame_num > 0x3FFF)
-+					{
++					if (dwc_ep->frame_num > 0x3FFF)	{
 +						dwc_ep->frm_overrun = 1;
 +						dwc_ep->frame_num &= 0x3FFF;
 +					} else 
@@ -78278,17 +78625,290 @@ index 0000000..4a6520f
 +#endif
 +			doepint.d32 =
 +			    dwc_otg_read_dev_out_ep_intr(core_if, dwc_ep);
-+
++			/* Moved this interrupt upper due to core deffect of asserting
++			 * OUT EP 0 xfercompl along with stsphsrcvd in BDMA */
++			if (doepint.b.stsphsercvd) {
++				deptsiz0_data_t deptsiz;
++				CLEAR_OUT_EP_INTR(core_if, epnum, stsphsercvd);
++				deptsiz.d32 =
++				    DWC_READ_REG32(&core_if->dev_if->
++						   out_ep_regs[0]->doeptsiz);
++				if (core_if->snpsid >= OTG_CORE_REV_3_00a
++				    && core_if->dma_enable
++				    && core_if->dma_desc_enable == 0
++				    && doepint.b.xfercompl
++				    && deptsiz.b.xfersize == 24) {
++					CLEAR_OUT_EP_INTR(core_if, epnum,
++							  xfercompl);
++					doepint.b.xfercompl = 0;
++					ep0_out_start(core_if, pcd);
++				}
++				if ((core_if->dma_desc_enable) ||
++				    (core_if->dma_enable
++				     && core_if->snpsid >=
++				     OTG_CORE_REV_3_00a)) {
++					do_setup_in_status_phase(pcd);
++				}
++			}
 +			/* Transfer complete */
 +			if (doepint.b.xfercompl) {
 +
 +				if (epnum == 0) {
 +					/* Clear the bit in DOEPINTn for this interrupt */
-+					CLEAR_OUT_EP_INTR(core_if, epnum,
-+							  xfercompl);
++					CLEAR_OUT_EP_INTR(core_if, epnum, xfercompl);
++					if (core_if->snpsid >= OTG_CORE_REV_3_00a) {
++						DWC_DEBUGPL(DBG_PCDV, "DOEPINT=%x doepint=%x\n",
++							DWC_READ_REG32(&core_if->dev_if->out_ep_regs[0]->doepint),
++							doepint.d32);
++						DWC_DEBUGPL(DBG_PCDV, "DOEPCTL=%x \n",
++							DWC_READ_REG32(&core_if->dev_if->out_ep_regs[0]->doepctl));
++
++						if (core_if->snpsid >= OTG_CORE_REV_3_00a
++							&& core_if->dma_enable == 0) {
++							doepint_data_t doepint;
++							doepint.d32 = DWC_READ_REG32(&core_if->dev_if->
++														out_ep_regs[0]->doepint);
++							if (pcd->ep0state == EP0_IDLE && doepint.b.sr) {
++								CLEAR_OUT_EP_INTR(core_if, epnum, sr);
++								goto exit_xfercompl;
++							}
++						}
++						/* In case of DDMA  look at SR bit to go to the Data Stage */
++						if (core_if->dma_desc_enable) {
++							dev_dma_desc_sts_t status = {.d32 = 0};
++							if (pcd->ep0state == EP0_IDLE) {
++								status.d32 = core_if->dev_if->setup_desc_addr[core_if->
++											dev_if->setup_desc_index]->status.d32;
++								if(pcd->data_terminated) {
++									 pcd->data_terminated = 0;
++									 status.d32 = core_if->dev_if->out_desc_addr->status.d32;
++									 dwc_memcpy(&pcd->setup_pkt->req, pcd->backup_buf, 8);
++								}
++								if (status.b.sr) {
++									if (doepint.b.setup) {
++										DWC_DEBUGPL(DBG_PCDV, "DMA DESC EP0_IDLE SR=1 setup=1\n");
++										/* Already started data stage, clear setup */
++										CLEAR_OUT_EP_INTR(core_if, epnum, setup);
++										doepint.b.setup = 0;
++										handle_ep0(pcd);
++										/* Prepare for more setup packets */
++										if (pcd->ep0state == EP0_IN_STATUS_PHASE ||
++											pcd->ep0state == EP0_IN_DATA_PHASE) {
++											ep0_out_start(core_if, pcd);
++										}
++
++										goto exit_xfercompl;
++									} else {
++										/* Prepare for more setup packets */
++										DWC_DEBUGPL(DBG_PCDV,
++											"EP0_IDLE SR=1 setup=0 new setup comes\n");
++										ep0_out_start(core_if, pcd);
++									}
++								}
++							} else {
++								dwc_otg_pcd_request_t *req;
++								dev_dma_desc_sts_t status = {.d32 = 0};
++								diepint_data_t diepint0;
++								diepint0.d32 = DWC_READ_REG32(&core_if->dev_if->
++															in_ep_regs[0]->diepint);
++
++								if (pcd->ep0state == EP0_STALL || pcd->ep0state == EP0_DISCONNECT) {
++									DWC_ERROR("EP0 is stalled/disconnected\n");
++								}
++
++								/* Clear IN xfercompl if set */
++								if (diepint0.b.xfercompl && (pcd->ep0state == EP0_IN_STATUS_PHASE
++									|| pcd->ep0state == EP0_IN_DATA_PHASE)) {
++									DWC_WRITE_REG32(&core_if->dev_if->
++										in_ep_regs[0]->diepint, diepint0.d32);
++								}
++
++								status.d32 = core_if->dev_if->setup_desc_addr[core_if->
++									dev_if->setup_desc_index]->status.d32;
++
++								if (ep->dwc_ep.xfer_count != ep->dwc_ep.total_len
++									&& (pcd->ep0state == EP0_OUT_DATA_PHASE))
++									status.d32 = core_if->dev_if->out_desc_addr->status.d32;
++								if (pcd->ep0state == EP0_OUT_STATUS_PHASE)
++									status.d32 = status.d32 = core_if->dev_if->
++									out_desc_addr->status.d32;
++
++								if (status.b.sr) {
++									if (DWC_CIRCLEQ_EMPTY(&ep->queue)) {
++										DWC_DEBUGPL(DBG_PCDV, "Request queue empty!!\n");
++									} else {
++										DWC_DEBUGPL(DBG_PCDV, "complete req!!\n");
++										req = DWC_CIRCLEQ_FIRST(&ep->queue);
++										if (ep->dwc_ep.xfer_count != ep->dwc_ep.total_len &&
++											pcd->ep0state == EP0_OUT_DATA_PHASE) {
++												/* Read arrived setup packet from req->buf */
++												dwc_memcpy(&pcd->setup_pkt->req,
++													req->buf + ep->dwc_ep.xfer_count, 8);
++										}
++										req->actual = ep->dwc_ep.xfer_count;
++										dwc_otg_request_done(ep, req, -ECONNRESET);
++										ep->dwc_ep.start_xfer_buff = 0;
++										ep->dwc_ep.xfer_buff = 0;
++										ep->dwc_ep.xfer_len = 0;
++									}
++									pcd->ep0state = EP0_IDLE;
++									if (doepint.b.setup) {
++										DWC_DEBUGPL(DBG_PCDV, "EP0_IDLE SR=1 setup=1\n");
++										/* Data stage started, clear setup */
++										CLEAR_OUT_EP_INTR(core_if, epnum, setup);
++										doepint.b.setup = 0;
++										handle_ep0(pcd);
++										/* Prepare for setup packets if ep0in was enabled*/
++										if (pcd->ep0state == EP0_IN_STATUS_PHASE) {
++											ep0_out_start(core_if, pcd);
++										}
++
++										goto exit_xfercompl;
++									} else {
++										/* Prepare for more setup packets */
++										DWC_DEBUGPL(DBG_PCDV,
++											"EP0_IDLE SR=1 setup=0 new setup comes 2\n");
++										ep0_out_start(core_if, pcd);
++									}
++								}
++							}
++						}
++						if (core_if->snpsid >= OTG_CORE_REV_2_94a && core_if->dma_enable
++							&& core_if->dma_desc_enable == 0) {
++							doepint_data_t doepint_temp = {.d32 = 0};
++							deptsiz0_data_t doeptsize0 = {.d32 = 0 };
++							doepint_temp.d32 = DWC_READ_REG32(&core_if->dev_if->
++															out_ep_regs[ep->dwc_ep.num]->doepint);
++							doeptsize0.d32 = DWC_READ_REG32(&core_if->dev_if->
++															out_ep_regs[ep->dwc_ep.num]->doeptsiz);
++							if (pcd->ep0state == EP0_IDLE) {
++								if (doepint_temp.b.sr) {
++									CLEAR_OUT_EP_INTR(core_if, epnum, sr);
++								}
++									doepint.d32 = DWC_READ_REG32(&core_if->dev_if->
++																	out_ep_regs[0]->doepint);
++									if (doeptsize0.b.supcnt == 3) {
++										DWC_DEBUGPL(DBG_ANY, "Rolling over!!!!!!!\n");
++										ep->dwc_ep.stp_rollover = 1;
++									}
++									if (doepint.b.setup) {
++retry:
++										/* Already started data stage, clear setup */
++										CLEAR_OUT_EP_INTR(core_if, epnum, setup);
++										doepint.b.setup = 0;
++										handle_ep0(pcd);
++										ep->dwc_ep.stp_rollover = 0;
++										/* Prepare for more setup packets */
++										if (pcd->ep0state == EP0_IN_STATUS_PHASE ||
++											pcd->ep0state == EP0_IN_DATA_PHASE) {
++											ep0_out_start(core_if, pcd);
++										}
++										goto exit_xfercompl;
++									} else {
++										/* Prepare for more setup packets */
++										DWC_DEBUGPL(DBG_ANY,
++											"EP0_IDLE SR=1 setup=0 new setup comes\n");
++										doepint.d32 = DWC_READ_REG32(&core_if->dev_if->
++																	out_ep_regs[0]->doepint);
++										if(doepint.b.setup)
++											goto retry;
++										ep0_out_start(core_if, pcd);
++									}
++							} else {
++								dwc_otg_pcd_request_t *req;
++								diepint_data_t diepint0 = {.d32 = 0};
++								doepint_data_t doepint_temp = {.d32 = 0};
++								depctl_data_t diepctl0;
++								diepint0.d32 = DWC_READ_REG32(&core_if->dev_if->
++																in_ep_regs[0]->diepint);
++								diepctl0.d32 = DWC_READ_REG32(&core_if->dev_if->
++																in_ep_regs[0]->diepctl);
++
++								if (pcd->ep0state == EP0_IN_DATA_PHASE
++									|| pcd->ep0state == EP0_IN_STATUS_PHASE) {
++									if (diepint0.b.xfercompl) {
++										DWC_WRITE_REG32(&core_if->dev_if->
++											in_ep_regs[0]->diepint, diepint0.d32);
++									}
++									if (diepctl0.b.epena) {
++										diepint_data_t diepint = {.d32 = 0};
++										diepctl0.b.snak = 1;
++										DWC_WRITE_REG32(&core_if->dev_if->
++														in_ep_regs[0]->diepctl, diepctl0.d32);
++										do {
++											dwc_udelay(10);
++											diepint.d32 = DWC_READ_REG32(&core_if->dev_if->
++												in_ep_regs[0]->diepint);
++										} while (!diepint.b.inepnakeff);
++										diepint.b.inepnakeff = 1;
++										DWC_WRITE_REG32(&core_if->dev_if->
++											in_ep_regs[0]->diepint, diepint.d32);
++										diepctl0.d32 = 0;
++										diepctl0.b.epdis = 1;
++										DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[0]->diepctl,
++														diepctl0.d32);
++										do {
++											dwc_udelay(10);
++											diepint.d32 = DWC_READ_REG32(&core_if->dev_if->
++												in_ep_regs[0]->diepint);
++										} while (!diepint.b.epdisabled);
++										diepint.b.epdisabled = 1;
++										DWC_WRITE_REG32(&core_if->dev_if->in_ep_regs[0]->diepint,
++															diepint.d32);
++									}
++								}
++								doepint_temp.d32 = DWC_READ_REG32(&core_if->dev_if->
++																out_ep_regs[ep->dwc_ep.num]->doepint);
++								if (doepint_temp.b.sr) {
++									CLEAR_OUT_EP_INTR(core_if, epnum, sr);
++									if (DWC_CIRCLEQ_EMPTY(&ep->queue)) {
++										DWC_DEBUGPL(DBG_PCDV, "Request queue empty!!\n");
++									} else {
++										DWC_DEBUGPL(DBG_PCDV, "complete req!!\n");
++										req = DWC_CIRCLEQ_FIRST(&ep->queue);
++										if (ep->dwc_ep.xfer_count != ep->dwc_ep.total_len &&
++											pcd->ep0state == EP0_OUT_DATA_PHASE) {
++												/* Read arrived setup packet from req->buf */
++												dwc_memcpy(&pcd->setup_pkt->req,
++													req->buf + ep->dwc_ep.xfer_count, 8);
++										}
++										req->actual = ep->dwc_ep.xfer_count;
++										dwc_otg_request_done(ep, req, -ECONNRESET);
++										ep->dwc_ep.start_xfer_buff = 0;
++										ep->dwc_ep.xfer_buff = 0;
++										ep->dwc_ep.xfer_len = 0;
++									}
++									pcd->ep0state = EP0_IDLE;
++									if (doepint.b.setup) {
++										DWC_DEBUGPL(DBG_PCDV, "EP0_IDLE SR=1 setup=1\n");
++										/* Data stage started, clear setup */
++										CLEAR_OUT_EP_INTR(core_if, epnum, setup);
++										doepint.b.setup = 0;
++										handle_ep0(pcd);
++										/* Prepare for setup packets if ep0in was enabled*/
++										if (pcd->ep0state == EP0_IN_STATUS_PHASE) {
++											ep0_out_start(core_if, pcd);
++										}
++										goto exit_xfercompl;
++									} else {
++										/* Prepare for more setup packets */
++										DWC_DEBUGPL(DBG_PCDV,
++											"EP0_IDLE SR=1 setup=0 new setup comes 2\n");
++										ep0_out_start(core_if, pcd);
++									}
++								}
++							}
++						}
++						if (core_if->dma_enable == 0 || pcd->ep0state != EP0_IDLE)
++							handle_ep0(pcd);
++exit_xfercompl:
++						DWC_DEBUGPL(DBG_PCDV, "DOEPINT=%x doepint=%x\n",
++							dwc_otg_read_dev_out_ep_intr(core_if, dwc_ep), doepint.d32);
++					} else {
 +					if (core_if->dma_desc_enable == 0
 +					    || pcd->ep0state != EP0_IDLE)
 +						handle_ep0(pcd);
++					}
 +#ifdef DWC_EN_ISOC
 +				} else if (dwc_ep->type == DWC_OTG_EP_TYPE_ISOC) {
 +					if (doepint.b.pktdrpsts == 0) {
@@ -78400,8 +79020,7 @@ index 0000000..4a6520f
 +			/* Setup Phase Done (contorl EPs) */
 +			if (doepint.b.setup) {
 +#ifdef DEBUG_EP0
-+				DWC_DEBUGPL(DBG_PCD, "EP%d SETUP Done\n",
-+					    epnum);
++				DWC_DEBUGPL(DBG_PCD, "EP%d SETUP Done\n", epnum);
 +#endif
 +				CLEAR_OUT_EP_INTR(core_if, epnum, setup);
 +
@@ -78429,13 +79048,7 @@ index 0000000..4a6520f
 +					}
 +				}
 +			}
-+			if (doepint.b.stsphsercvd) {
-+				CLEAR_OUT_EP_INTR(core_if, epnum, stsphsercvd);
-+				if (core_if->dma_desc_enable) {
-+					do_setup_in_status_phase(pcd);
-+				}
-+			}
-+			/* Babble Interrutp */
++			/* Babble Interrupt */
 +			if (doepint.b.babble) {
 +				DWC_DEBUGPL(DBG_ANY, "EP%d OUT Babble\n",
 +					    epnum);
@@ -78443,16 +79056,13 @@ index 0000000..4a6520f
 +
 +				CLEAR_OUT_EP_INTR(core_if, epnum, babble);
 +			}
-+			if (doepint.b.outtknepdis)
-+			{
++			if (doepint.b.outtknepdis) {
 +				DWC_DEBUGPL(DBG_ANY, "EP%d OUT Token received when EP is \
 +					disabled\n",epnum);
-+				if (ep->dwc_ep.type == DWC_OTG_EP_TYPE_ISOC)
-+				{
++				if (ep->dwc_ep.type == DWC_OTG_EP_TYPE_ISOC) {
 +					doepmsk_data_t doepmsk = {.d32 = 0};
 +					ep->dwc_ep.frame_num = core_if->frame_num;
-+					if (ep->dwc_ep.bInterval > 1) 
-+					{
++					if (ep->dwc_ep.bInterval > 1) {
 +						depctl_data_t depctl;
 +						depctl.d32 = DWC_READ_REG32(&core_if->dev_if->
 +													out_ep_regs[epnum]->doepctl);
@@ -78503,7 +79113,8 @@ index 0000000..4a6520f
 +	int retval = 0;
 +	if(!frm_overrun && curr_fr >= trgt_fr) 
 +		retval = 1;
-+	else if (frm_overrun && (curr_fr >= trgt_fr && ((curr_fr - trgt_fr) < 0x3FFF/2)))
++	else if (frm_overrun
++		 && (curr_fr >= trgt_fr && ((curr_fr - trgt_fr) < 0x3FFF / 2)))
 +		retval = 1;
 +	return retval;
 +}
@@ -78813,8 +79424,8 @@ index 0000000..4a6520f
 +		}
 +		if (i > dev_if->num_out_eps) {
 +			dctl_data_t dctl;
-+			dctl.d32 = DWC_READ_REG32(&dev_if->
-+				dev_global_regs->dctl);
++			dctl.d32 =
++			    DWC_READ_REG32(&dev_if->dev_global_regs->dctl);
 +			dctl.b.cgoutnak = 1;
 +			DWC_WRITE_REG32(&dev_if->dev_global_regs->dctl,
 +				dctl.d32);
@@ -78822,8 +79433,7 @@ index 0000000..4a6520f
 +		}
 +
 +		/* Disable the endpoint */
-+		doepctl.d32 = DWC_READ_REG32(&dev_if->
-+										out_ep_regs[i]->doepctl);
++		doepctl.d32 = DWC_READ_REG32(&dev_if->out_ep_regs[i]->doepctl);
 +		if (doepctl.b.epena) {
 +			doepctl.b.epdis = 1;
 +			doepctl.b.snak = 1;
@@ -78832,20 +79442,22 @@ index 0000000..4a6520f
 +		return 1;
 +	}
 +	/* We come here from Incomplete ISO OUT handler */
-+	if(dev_if->isoc_ep)
-+	{
++	if (dev_if->isoc_ep) {
 +		dwc_ep_t *dwc_ep = (dwc_ep_t *)dev_if->isoc_ep;
 +		uint32_t epnum = dwc_ep->num;
 +		doepint_data_t doepint;
-+		doepint.d32 = DWC_READ_REG32(&dev_if->out_ep_regs[dwc_ep->num]->doepint);
++		doepint.d32 =
++		    DWC_READ_REG32(&dev_if->out_ep_regs[dwc_ep->num]->doepint);
 +		dev_if->isoc_ep = NULL;
-+		doepctl.d32 = DWC_READ_REG32(&dev_if->out_ep_regs[epnum]->doepctl);
++		doepctl.d32 =
++		    DWC_READ_REG32(&dev_if->out_ep_regs[epnum]->doepctl);
 +		DWC_PRINTF("Before disable DOEPCTL = %08x\n", doepctl.d32);
 +		if (doepctl.b.epena) {
 +			doepctl.b.epdis = 1;
 +			doepctl.b.snak = 1;
 +		}
-+		DWC_WRITE_REG32(&dev_if->out_ep_regs[epnum]->doepctl, doepctl.d32);
++		DWC_WRITE_REG32(&dev_if->out_ep_regs[epnum]->doepctl,
++				doepctl.d32);
 +		return 1;
 +	} else
 +		DWC_PRINTF("INTERRUPT Handler not implemented for %s\n",
@@ -78988,16 +79600,16 @@ index 0000000..4a6520f
 +
 +#endif /* DWC_HOST_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_pcd_linux.c b/drivers/usb/host/dwc_otg/dwc_otg_pcd_linux.c
-new file mode 100755
-index 0000000..f37e854
+new file mode 100644
+index 0000000..9289fc0
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_pcd_linux.c
-@@ -0,0 +1,1373 @@
+@@ -0,0 +1,1374 @@
 + /* ==========================================================================
 +  * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_pcd_linux.c $
-+  * $Revision: #19 $
-+  * $Date: 2011/10/26 $
-+  * $Change: 1873028 $
++  * $Revision: #21 $
++  * $Date: 2012/08/10 $
++  * $Change: 2047372 $
 +  *
 +  * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 +  * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -79520,9 +80132,10 @@ index 0000000..f37e854
 +				     req->buf1, req->dma0, req->dma1,
 +				     req->sync_frame, req->data_pattern_frame,
 +				     req->data_per_frame,
-+				     req->flags & USB_REQ_ISO_ASAP ? -1 : req->
-+				     start_frame, req->buf_proc_intrvl, req,
-+				     gfp_flags == GFP_ATOMIC ? 1 : 0);
++				     req->
++				     flags & USB_REQ_ISO_ASAP ? -1 :
++				     req->start_frame, req->buf_proc_intrvl,
++				     req, gfp_flags == GFP_ATOMIC ? 1 : 0);
 +
 +	if (retval) {
 +		return -EINVAL;
@@ -80367,16 +80980,16 @@ index 0000000..f37e854
 +
 +#endif /* DWC_HOST_ONLY */
 diff --git a/drivers/usb/host/dwc_otg/dwc_otg_regs.h b/drivers/usb/host/dwc_otg/dwc_otg_regs.h
-new file mode 100755
-index 0000000..8dc648b
+new file mode 100644
+index 0000000..0572642
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/dwc_otg_regs.h
-@@ -0,0 +1,2545 @@
+@@ -0,0 +1,2550 @@
 +/* ==========================================================================
 + * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_regs.h $
-+ * $Revision: #97 $
-+ * $Date: 2011/10/24 $
-+ * $Change: 1871160 $
++ * $Revision: #98 $
++ * $Date: 2012/08/10 $
++ * $Change: 2047372 $
 + *
 + * Synopsys HS OTG Linux Software Driver and documentation (hereinafter,
 + * "Software") is an Unsupported proprietary work of Synopsys, Inc. unless
@@ -81200,8 +81813,9 @@ index 0000000..8dc648b
 +		unsigned num_dev_perio_in_ep:4;
 +		unsigned power_optimiz:1;
 +		unsigned min_ahb_freq:1;
-+		unsigned part_power_down:1;
-+		unsigned reserved:7;
++		unsigned hiber:1;
++		unsigned xhiber:1;
++		unsigned reserved:6;
 +		unsigned utmi_phy_data_width:2;
 +		unsigned num_dev_mode_ctrl_ep:4;
 +		unsigned iddig_filt_en:1;
@@ -81704,8 +82318,10 @@ index 0000000..8dc648b
 +		unsigned nak:1;
 +		/** NYET Interrupt */
 +		unsigned nyet:1;
++		/** Bit indicating setup packet received */
++		unsigned sr:1;
 +
-+		unsigned reserved15_31:17;
++		unsigned reserved16_31:16;
 +	} b;
 +} doepint_data_t;
 +
@@ -82822,7 +83438,9 @@ index 0000000..8dc648b
 +		unsigned deep_sleep:1;
 +		unsigned resetaftsusp:1;
 +		unsigned restoremode:1;
-+		unsigned reserved10_12:3;
++		unsigned enbl_extnd_hiber:1;
++		unsigned extnd_hiber_pwrclmp:1;
++		unsigned extnd_hiber_switch:1;
 +		unsigned ess_reg_restored:1;
 +		unsigned prt_clk_sel:2;
 +		unsigned port_power:1;
@@ -82918,7 +83536,7 @@ index 0000000..8dc648b
 +
 +#endif
 diff --git a/drivers/usb/host/dwc_otg/test/Makefile b/drivers/usb/host/dwc_otg/test/Makefile
-new file mode 100755
+new file mode 100644
 index 0000000..fc45375
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/test/Makefile
@@ -82940,7 +83558,7 @@ index 0000000..fc45375
 +	  fi \
 +	done
 diff --git a/drivers/usb/host/dwc_otg/test/dwc_otg_test.pm b/drivers/usb/host/dwc_otg/test/dwc_otg_test.pm
-new file mode 100755
+new file mode 100644
 index 0000000..233b04a
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/test/dwc_otg_test.pm
@@ -83283,7 +83901,7 @@ index 0000000..233b04a
 +
 +1;
 diff --git a/drivers/usb/host/dwc_otg/test/test_mod_param.pl b/drivers/usb/host/dwc_otg/test/test_mod_param.pl
-new file mode 100755
+new file mode 100644
 index 0000000..e887dce
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/test/test_mod_param.pl
@@ -83422,7 +84040,7 @@ index 0000000..e887dce
 +test_main();
 +0;
 diff --git a/drivers/usb/host/dwc_otg/test/test_sysfs.pl b/drivers/usb/host/dwc_otg/test/test_sysfs.pl
-new file mode 100755
+new file mode 100644
 index 0000000..abcf284
 --- /dev/null
 +++ b/drivers/usb/host/dwc_otg/test/test_sysfs.pl
