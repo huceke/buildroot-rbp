@@ -188,14 +188,12 @@ CT_KERNEL="linux"
 CT_KERNEL_VERSION="2.6.38.8"
 CT_KERNEL_linux=y
 CT_KERNEL_linux_AVAILABLE=y
-# CT_KERNEL_V_3_3_4 is not set
-# CT_KERNEL_V_3_3_3 is not set
-# CT_KERNEL_V_3_3_2 is not set
-# CT_KERNEL_V_3_3_1 is not set
-# CT_KERNEL_V_3_3 is not set
-# CT_KERNEL_V_3_2_16 is not set
+# CT_KERNEL_V_3_5 is not set
+# CT_KERNEL_V_3_4_7 is not set
+# CT_KERNEL_V_3_3_8 is not set
+# CT_KERNEL_V_3_2_25 is not set
 # CT_KERNEL_V_3_1_10 is not set
-# CT_KERNEL_V_3_0_30 is not set
+# CT_KERNEL_V_3_0_39 is not set
 # CT_KERNEL_V_2_6_39_4 is not set
 CT_KERNEL_V_2_6_38_8=y
 # CT_KERNEL_V_2_6_37_6 is not set
@@ -258,10 +256,11 @@ CT_BINUTILS_EXTRA_CONFIG_ARRAY=""
 # C compiler
 #
 CT_CC="gcc"
-CT_CC_VERSION="4.7.0"
+CT_CC_VERSION="4.7.1"
 CT_CC_gcc=y
 # CT_CC_GCC_SHOW_LINARO is not set
-CT_CC_V_4_7_0=y
+CT_CC_V_4_7_1=y
+# CT_CC_V_4_7_0 is not set
 # CT_CC_V_4_6_3 is not set
 # CT_CC_V_4_6_2 is not set
 # CT_CC_V_4_6_1 is not set
@@ -301,6 +300,7 @@ CT_CC_GCC_HAS_LNK_HASH_STYLE=y
 CT_CC_GCC_USE_GMP_MPFR=y
 CT_CC_GCC_USE_PPL_CLOOG=y
 CT_CC_GCC_USE_MPC=y
+CT_CC_GCC_HAS_LIBQUADMATH=y
 # CT_CC_LANG_FORTRAN is not set
 CT_CC_SUPPORT_CXX=y
 CT_CC_SUPPORT_FORTRAN=y
@@ -341,6 +341,7 @@ CT_CC_GCC_USE_LTO=y
 # CT_CC_GCC_LIBMUDFLAP is not set
 # CT_CC_GCC_LIBGOMP is not set
 # CT_CC_GCC_LIBSSP is not set
+# CT_CC_GCC_LIBQUADMATH is not set
 
 #
 # Misc. obscure options.
@@ -363,6 +364,7 @@ CT_LIBC="eglibc"
 CT_LIBC_VERSION="2_12"
 CT_LIBC_eglibc=y
 CT_LIBC_eglibc_AVAILABLE=y
+# CT_LIBC_EGLIBC_V_2_16 is not set
 # CT_LIBC_EGLIBC_V_2_15 is not set
 # CT_LIBC_EGLIBC_V_2_14 is not set
 # CT_LIBC_EGLIBC_V_2_13 is not set
@@ -392,10 +394,6 @@ CT_THREADS="nptl"
 CT_THREADS_NPTL=y
 # CT_THREADS_LINUXTHREADS is not set
 CT_LIBC_XLDD=y
-
-#
-# eglibc other options
-#
 CT_LIBC_GLIBC_MAY_FORCE_PORTS=y
 CT_LIBC_glibc_familly=y
 CT_LIBC_GLIBC_EXTRA_CONFIG_ARRAY=""
@@ -408,6 +406,15 @@ CT_LIBC_OLDEST_ABI=""
 CT_LIBC_GLIBC_FORCE_UNWIND=y
 CT_LIBC_GLIBC_USE_PORTS=y
 CT_LIBC_ADDONS_LIST=""
+# CT_LIBC_LOCALES is not set
+# CT_LIBC_GLIBC_KERNEL_VERSION_NONE is not set
+CT_LIBC_GLIBC_KERNEL_VERSION_AS_HEADERS=y
+# CT_LIBC_GLIBC_KERNEL_VERSION_CHOSEN is not set
+CT_LIBC_GLIBC_MIN_KERNEL="2.6.38.8"
+
+#
+# eglibc other options
+#
 
 #
 # WARNING !!!                                            
@@ -428,11 +435,6 @@ CT_LIBC_ADDONS_LIST=""
 #
 #   or try again later... :-(                            
 #
-# CT_LIBC_LOCALES is not set
-# CT_LIBC_GLIBC_KERNEL_VERSION_NONE is not set
-CT_LIBC_GLIBC_KERNEL_VERSION_AS_HEADERS=y
-# CT_LIBC_GLIBC_KERNEL_VERSION_CHOSEN is not set
-CT_LIBC_GLIBC_MIN_KERNEL="2.6.38.8"
 
 #
 # Debug facilities
