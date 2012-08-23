@@ -1,0 +1,21 @@
+#! /bin/sh
+#
+
+case "$1" in
+	start)
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-page-alloc.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-timer.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-pcm.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/arm/snd-bcm2835.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/oss/snd-mixer-oss.ko
+    modprobe hid-apple
+    
+    ;;
+	stop)
+		;;
+	*)
+		echo "Usage: urandom {start|stop}" >&2
+		exit 1
+		;;
+esac

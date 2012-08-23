@@ -40,21 +40,10 @@ case "$1" in
     /sbin/ifconfig lo 127.0.0.1 up
     /sbin/route add -net 127.0.0.0 netmask 255.0.0.0 lo
 
-    /bin/mkdir -p /run/udev > /dev/null
     /bin/mkdir -p /var/run/dbus > /dev/null
     rm -f /var/run/dbus/* > /dev/null
     rm -f /var/run/messagebus.pid > /dev/null
     rm -f /var/run/avahi-daemon/* > /dev/null
-
-    echo on > /proc/dwc_sof/SOF_reduction
-    
-    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd.ko
-    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-page-alloc.ko
-    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-timer.ko
-    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-pcm.ko
-    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/arm/snd-bcm2835.ko
-    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/oss/snd-mixer-oss.ko
-    /sbin/insmod /lib/modules/`uname -r`/kernel/drivers/hid/hid-apple.ko
 
     ;;
 	stop)
