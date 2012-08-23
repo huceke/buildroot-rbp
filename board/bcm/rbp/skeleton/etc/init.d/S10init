@@ -47,6 +47,14 @@ case "$1" in
 
     echo on > /proc/dwc_sof/SOF_reduction
     
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-page-alloc.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-timer.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/snd-pcm.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/arm/snd-bcm2835.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/sound/core/oss/snd-mixer-oss.ko
+    /sbin/insmod /lib/modules/`uname -r`/kernel/drivers/hid/hid-apple.ko
+
     ;;
 	stop)
 		;;
