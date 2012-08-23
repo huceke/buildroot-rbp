@@ -40,6 +40,7 @@ case "$1" in
     /sbin/ifconfig lo 127.0.0.1 up
     /sbin/route add -net 127.0.0.0 netmask 255.0.0.0 lo
 
+    /bin/mkdir -p /run/udev > /dev/null
     /bin/mkdir -p /var/run/dbus > /dev/null
     rm -f /var/run/dbus/* > /dev/null
     rm -f /var/run/messagebus.pid > /dev/null
