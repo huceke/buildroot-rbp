@@ -361,18 +361,21 @@ CT_CC_GCC_LNK_HASH_STYLE=""
 # C-library
 #
 CT_LIBC="eglibc"
-CT_LIBC_VERSION="2_12"
+CT_LIBC_VERSION="2_13"
 CT_LIBC_eglibc=y
 CT_LIBC_eglibc_AVAILABLE=y
 # CT_LIBC_EGLIBC_V_2_16 is not set
 # CT_LIBC_EGLIBC_V_2_15 is not set
 # CT_LIBC_EGLIBC_V_2_14 is not set
-# CT_LIBC_EGLIBC_V_2_13 is not set
-CT_LIBC_EGLIBC_V_2_12=y
+CT_LIBC_EGLIBC_V_2_13=y
+# CT_LIBC_EGLIBC_V_2_12 is not set
 # CT_LIBC_EGLIBC_V_2_11 is not set
 # CT_LIBC_EGLIBC_V_2_10 is not set
 # CT_LIBC_EGLIBC_V_2_9 is not set
 # CT_LIBC_EGLIBC_V_TRUNK is not set
+# CT_LIBC_EGLIBC_2_15_or_later is not set
+# CT_LIBC_EGLIBC_2_14_or_later is not set
+CT_LIBC_EGLIBC_2_13_or_later=y
 CT_LIBC_EGLIBC_2_12_or_later=y
 CT_LIBC_EGLIBC_2_11_or_later=y
 CT_LIBC_EGLIBC_2_10_or_later=y
