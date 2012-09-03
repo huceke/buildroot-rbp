@@ -18,9 +18,9 @@ export LD_LIBRARY_PATH=/opt/vc/lib:/usr/lib/mysql:$XBMC_BASE/lib
 
 echo 0 >  /sys/class/vtconsole/vtcon1/bind
 fbset -xres 1 -yres 1 -vxres 1 -vyres 1
-#gdb --args /opt/xbmc/lib/xbmc/xbmc.bin -standalone -fs "$1"
+#gdb --args /opt/xbmc/lib/xbmc/xbmc.bin --standalone --fs "$1"
 /opt/xbmc/lib/xbmc/xbmc.bin --standalone --fs "$1"
-#gdbserver 192.168.10.9:2345 /opt/xbmc/lib/xbmc/xbmc.bin -standalone -fs "$1"
+#gdbserver 192.168.10.9:2345 /opt/xbmc/lib/xbmc/xbmc.bin --standalone --fs "$1"
 #fbset -xres ${XRES} -yres ${YRES}
 #echo 1 >  /sys/class/vtconsole/vtcon1/bind
 
