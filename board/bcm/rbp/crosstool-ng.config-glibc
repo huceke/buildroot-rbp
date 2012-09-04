@@ -57,7 +57,7 @@ CT_PATCH_ORDER="bundled"
 #
 # Build behavior
 #
-CT_PARALLEL_JOBS=0
+CT_PARALLEL_JOBS=2
 CT_LOAD=0
 CT_USE_PIPES=y
 CT_EXTRA_FLAGS_FOR_HOST=""
@@ -281,12 +281,13 @@ CT_BINUTILS_EXTRA_CONFIG_ARRAY=""
 # C compiler
 #
 CT_CC="gcc"
-CT_CC_VERSION="linaro-4.7-2012.04"
+CT_CC_VERSION="4.7.1"
 CT_CC_gcc=y
 CT_CC_GCC_SHOW_LINARO=y
-CT_CC_V_linaro_4_7_2012_04=y
+# CT_CC_V_linaro_4_7_2012_07 is not set
+CT_CC_V_4_7_1=y
 # CT_CC_V_4_7_0 is not set
-# CT_CC_V_linaro_4_6_2012_04 is not set
+# CT_CC_V_linaro_4_6_2012_07 is not set
 # CT_CC_V_4_6_3 is not set
 # CT_CC_V_4_6_2 is not set
 # CT_CC_V_4_6_1 is not set

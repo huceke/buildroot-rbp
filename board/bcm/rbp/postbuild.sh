@@ -15,5 +15,6 @@ fi
 cp -ar ${TARGET_DIR}/../staging/usr/lib/gconv ${TARGET_DIR}/usr/lib/
 cp -ar ${TARGET_DIR}/../staging/usr/share/zoneinfo ${TARGET_DIR}/usr/share/
 cp -ar ${TARGET_DIR}/../staging/usr/share/locale ${TARGET_DIR}/usr/share/
+cp -ar ${TARGET_DIR}/../staging/sbin/ldconfig ${TARGET_DIR}/sbin/
 
 exit 0
