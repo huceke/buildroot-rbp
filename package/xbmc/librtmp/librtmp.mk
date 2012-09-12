@@ -3,10 +3,13 @@
 #librtmp
 #
 #############################################################
-LIBRTMP_VERSION=2.4
-LIBRTMP_SOURCE=rtmpdump-$(LIBRTMP_VERSION).tar.gz
-LIBRTMP_SITE=http://mirrors.xbmc.org/build-deps/darwin-libs
-LIBRTMP_INSTALL_STAGING=YES
+LIBRTMP_VERSION = e0056c51cc1710c9a44d2a2c4e2f344fa9cabcf4
+LIBRTMP_SOURCE = rtmpdump-$(LIBRTMP_VERSION).tar.gz
+LIBRTMP_SITE_METHOD = git
+LIBRTMP_SITE = git://git.ffmpeg.org/rtmpdump
+LIBRTMP_INSTALL_STAGING = YES
+
+LIBRTMP_DEPENDENCIES = openssl
 
 define LIBRTMP_BUILD_CMDS
 	sed -ie "s|prefix=/usr/local|prefix=/usr|" $(@D)/librtmp/Makefile
@@ -22,4 +25,3 @@ define LIBRTMP_INSTALL_TARGET_CMDS
 endef
 
 $(eval $(call GENTARGETS,package/xbmc,librtmp))
-
