@@ -4,7 +4,7 @@
 #
 #################################################################################
 
-XBMC_VERSION = d799527cd55b2da3b5f414b950d1d4c547e29cf7
+XBMC_VERSION = b59f9f1810cd63457a30caf996c667ed20e468cc
 XBMC_SITE_METHOD = git
 XBMC_SITE = https://github.com/xbmc/xbmc.git
 XBMC_INSTALL_STAGING = YES
@@ -15,7 +15,8 @@ XBMC_DEPENDENCIES = host-lzo host-sdl_image vc
 XBMC_CONF_OPT+= --enable-gles --disable-sdl --disable-x11 --disable-xrandr --disable-openmax \
   --disable-optical-drive --disable-dvdcss --disable-joystick --disable-debug \
 	--disable-crystalhd --disable-vtbdecoder --disable-vaapi --disable-vdpau \
-	--disable-pulse --disable-projectm --with-platform=raspberry-pi --disable-optimizations
+	--disable-pulse --disable-projectm --with-platform=raspberry-pi --enable-optimizations \
+	--enable-libcec --enable-player=omxplayer
 
 XBMC_MAKE_OPT+= -j1
 
@@ -25,7 +26,7 @@ XBMC_DEPENDENCIES += libogg flac libmad libmpeg2 libogg \
   freetype jasper jpeg libmodplug libpng libungif tiff libcurl \
   libmicrohttpd libssh2 boost fribidi ncurses pcre libnfs afpfs-ng \
 	libplist libshairport libbluray readline expat libxml2 yajl libass \
-	libusb-compat avahi udev
+	libusb-compat avahi udev tinyxml taglib18 libcec
 
 XBMC_CONF_ENV += PYTHON_VERSION="$(PYTHON_VERSION_MAJOR)"
 XBMC_CONF_ENV += PYTHON_LDFLAGS="-L$(STAGING_DIR)/usr/lib/ -lpython$(PYTHON_VERSION_MAJOR) -lpthread -ldl -lutil -lm"
@@ -60,9 +61,17 @@ define XBMC_CLEAN_CONFLUENCE_SKIN
   find $(TARGET_DIR)/usr/share/xbmc/addons/skin.confluence/media -name *.jpg -delete
 endef
 
+define XBMC_STRIP_BINARIES
+  find $(TARGET_DIR)/usr/lib/xbmc/ -name "*.so" -exec $(STRIPCMD) $(STRIP_STRIP_UNNEEDED) {} \;
+  $(STRIPCMD) $(STRIP_STRIP_UNNEEDED) $(TARGET_DIR)/usr/lib/xbmc/xbmc.bin
+endef
+
 XBMC_PRE_CONFIGURE_HOOKS += XBMC_BOOTSTRAP
 XBMC_POST_INSTALL_TARGET_HOOKS += XBMC_INSTALL_ETC
 XBMC_POST_INSTALL_TARGET_HOOKS += XBMC_CLEAN_UNUSED_ADDONS
 XBMC_POST_INSTALL_TARGET_HOOKS += XBMC_CLEAN_CONFLUENCE_SKIN
+ifneq ($(BR2_ENABLE_DEBUG),y)
+XBMC_POST_INSTALL_TARGET_HOOKS += XBMC_STRIP_BINARIES
+endif
 
 $(eval $(call AUTOTARGETS))
