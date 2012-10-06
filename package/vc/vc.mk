@@ -4,7 +4,7 @@
 #
 #################################################################################
 
-VC_VERSION = b5898de75d8f2c4e5c42d81acf2fbad81c669808
+VC_VERSION = 1a7fbe8113ffadfde24863f6fcb50ff8be9265c6
 VC_SITE_METHOD = git
 VC_SITE = https://github.com/raspberrypi/firmware.git
 VC_INSTALL_STAGING = YES
@@ -29,7 +29,6 @@ define VC_INSTALL_TARGET_CMDS
 	find $(@D)/hardfp/opt/vc/sbin -type f -exec install -m 755 {} $(TARGET_DIR)/opt/vc/sbin \;
 	find $(@D)/hardfp/opt/vc/bin -type f -exec install -m 755 {} $(TARGET_DIR)/opt/vc/bin \;
 	cp $(@D)/boot/arm128_start.elf $(BINARIES_DIR)/start.elf
-	cp $(@D)/boot/loader.bin $(BINARIES_DIR)/
 	cp $(@D)/boot/bootcode.bin $(BINARIES_DIR)/
 	cp package/vc/cmdline.txt.example $(BINARIES_DIR)/
 	install -d -m 755 $(TARGET_DIR)/etc/init.d
