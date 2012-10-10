@@ -18,5 +18,8 @@ source "package/xbmc/sg3_utils/Config.in"
 source "package/xbmc/tinyxml/Config.in"
 source "package/xbmc/udisks/Config.in"
 source "package/xbmc/taglib18/Config.in"
+source "package/xbmc/libssh/Config.in"
 source "package/xbmc/xbmc/Config.in"
+source "package/xbmc/tvheadend/Config.in"
+source "package/xbmc/v4lutils/Config.in"
 endmenu
