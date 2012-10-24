@@ -1,14 +1,30 @@
+# cat .xbmc/userdata/advancedsettings.xml 
 <advancedsettings>
+  <gui>    
+    <algorithmdirtyregions>3</algorithmdirtyregions>
+    <nofliptimeout>0</nofliptimeout>
+    <visualizedirtyregions>off</visualizedirtyregions>
+  </gui>
+<!--
+  <gui>    
+    <bufferxbtinmemory>1</bufferxbtinmemory>
+  </gui>
+-->
   <omx>
 <!--
     <omxhwaudiodecode>1</omxhwaudiodecode>
     <omxdecodestartwithvalidframe>1</omxdecodestartwithvalidframe>
 -->
   </omx>
+  <destroywindowcontrols>false</destroywindowcontrols>
   <network> 
     <cachemembuffersize>30242880</cachemembuffersize> 
   </network>
-  <fanartheight>512</fanartheight>
-  <thumbsize>256</thumbsize>
-  <bginfoloadermaxthreads>1</bginfoloadermaxthreads> 
+  <fanartres>512</fanartres>
+  <imageres>256</imageres>
+  <bginfoloadermaxthreads>2</bginfoloadermaxthreads> 
+<!--
+  <useddsfanart>true</useddsfanart>
+  <loglevel>1</loglevel>
+-->
 </advancedsettings>
