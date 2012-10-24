@@ -4,7 +4,7 @@
 #
 #################################################################################
 
-VC_VERSION = 831239e34138f463d1aaf6e00c096e7db851014c
+VC_VERSION = 14a55da8c39768893f4a67de180229324a85156a
 VC_SITE_METHOD = git
 VC_SITE = https://github.com/raspberrypi/firmware.git
 VC_INSTALL_STAGING = YES
@@ -29,8 +29,10 @@ define VC_INSTALL_TARGET_CMDS
 	find $(@D)/hardfp/opt/vc/sbin -type f -exec install -m 755 {} $(TARGET_DIR)/opt/vc/sbin \;
 	find $(@D)/hardfp/opt/vc/bin -type f -exec install -m 755 {} $(TARGET_DIR)/opt/vc/bin \;
 	cp $(@D)/boot/arm128_start.elf $(BINARIES_DIR)/start.elf
-	cp $(@D)/boot/loader.bin $(BINARIES_DIR)/
+	#cp $(@D)/boot/loader.bin $(BINARIES_DIR)/
 	cp $(@D)/boot/bootcode.bin $(BINARIES_DIR)/
+	cp $(@D)/boot/fixup_cd.dat $(BINARIES_DIR)/
+	cp $(@D)/boot/fixup.dat $(BINARIES_DIR)/
 	cp package/vc/cmdline.txt.example $(BINARIES_DIR)/
 	install -d -m 755 $(TARGET_DIR)/etc/init.d
 	install -m 755 package/vc/S99vcfield $(TARGET_DIR)/etc/init.d/
