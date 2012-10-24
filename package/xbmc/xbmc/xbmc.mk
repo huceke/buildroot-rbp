@@ -4,7 +4,7 @@
 #
 #################################################################################
 
-XBMC_VERSION = b59f9f1810cd63457a30caf996c667ed20e468cc
+XBMC_VERSION = 130bd4ee55688a8ae49a04256308831363d2c58f
 XBMC_SITE_METHOD = git
 XBMC_SITE = https://github.com/xbmc/xbmc.git
 XBMC_INSTALL_STAGING = YES
@@ -16,7 +16,7 @@ XBMC_CONF_OPT+= --enable-gles --disable-sdl --disable-x11 --disable-xrandr --dis
   --disable-optical-drive --disable-dvdcss --disable-joystick --disable-debug \
 	--disable-crystalhd --disable-vtbdecoder --disable-vaapi --disable-vdpau \
 	--disable-pulse --disable-projectm --with-platform=raspberry-pi --enable-optimizations \
-	--enable-libcec --enable-player=omxplayer
+	--enable-libcec --enable-player=omxplayer --disable-alsa
 
 XBMC_MAKE_OPT+= -j1
 
