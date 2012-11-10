@@ -4,7 +4,7 @@
 #
 #################################################################################
 
-VC_VERSION = 14a55da8c39768893f4a67de180229324a85156a
+VC_VERSION = 9f5760fcecfe5ea04d00fdb53a65d3e45378e045
 VC_SITE_METHOD = git
 VC_SITE = https://github.com/raspberrypi/firmware.git
 VC_INSTALL_STAGING = YES
@@ -28,8 +28,7 @@ define VC_INSTALL_TARGET_CMDS
 	find $(@D)/hardfp/opt/vc/lib -type f -exec install -m 644 {} $(TARGET_DIR)/opt/vc/lib \;
 	find $(@D)/hardfp/opt/vc/sbin -type f -exec install -m 755 {} $(TARGET_DIR)/opt/vc/sbin \;
 	find $(@D)/hardfp/opt/vc/bin -type f -exec install -m 755 {} $(TARGET_DIR)/opt/vc/bin \;
-	cp $(@D)/boot/arm128_start.elf $(BINARIES_DIR)/start.elf
-	#cp $(@D)/boot/loader.bin $(BINARIES_DIR)/
+	cp $(@D)/boot/start.elf $(BINARIES_DIR)/start.elf
 	cp $(@D)/boot/bootcode.bin $(BINARIES_DIR)/
 	cp $(@D)/boot/fixup_cd.dat $(BINARIES_DIR)/
 	cp $(@D)/boot/fixup.dat $(BINARIES_DIR)/
