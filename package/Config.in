@@ -655,4 +655,6 @@ endif
 endmenu
 
 source "package/xbmc/Config.in"
+source "package/allwinner-mali/Config.in"
+source "package/allwinner-cedar/Config.in"
 endmenu

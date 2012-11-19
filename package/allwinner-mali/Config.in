@@ -1,0 +1,7 @@
+config BR2_PACKAGE_ALLWINNER_MALI
+	bool "allwinnermali"
+	help
+	  Allwinner mali userspace
+
+	  https://github.com/linux-sunxi/mali-libs/
+

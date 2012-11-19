@@ -5,3 +5,8 @@ config BR2_PACKAGE_LIBCEC
 	  hdmi cec library.
 
 	  https://github.com/Pulse-Eight/libcec
+
+config BR2_PACKAGE_LIBCEC_RBP
+	bool "libcec_rbp"
+	default y
+

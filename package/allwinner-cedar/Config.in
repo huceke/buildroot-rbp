@@ -1,0 +1,7 @@
+config BR2_PACKAGE_ALLWINNER_CEDAR
+	bool "allwinnercedar"
+	help
+	  Allwinner cedar decoder lib
+
+	  https://github.com/linux-sunxi/cedarx-libs
+

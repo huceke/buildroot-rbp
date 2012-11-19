@@ -1,0 +1,58 @@
+#! /bin/sh
+#
+
+case "$1" in
+	start)
+    echo 'Setting up standard mounts'
+    /bin/mount -t proc proc /proc
+    if [ ! -e /dev/null ];
+    then
+      /bin/mknod -m 666 /dev/null c 1 3
+      /bin/mknod -m 622 /dev/console c 5 1
+      /bin/mknod -m 666 /dev/zero c 1 5
+      /bin/mknod -m 666 /dev/ptmx c 5 2
+      /bin/mknod -m 666 /dev/tty c 5 0
+      /bin/mknod -m 444 /dev/random c 1 8
+      /bin/mknod -m 444 /dev/urandom c 1 9
+      /bin/mkdir -p /dev/pts > /dev/null
+      /bin/mkdir -p /dev/shm > /dev/null
+      ln -s /proc/self/fd /dev/fd
+      ln -s /proc/self/fd/0 /dev/stdin
+      ln -s /proc/self/fd/1 /dev/stdout
+      ln -s /proc/self/fd/2 /dev/stderr
+      ln -s /proc/kcore /dev/core
+      ln -s /tmp/log /dev/log
+    fi
+    /bin/mount -t sysfs sys /sys > /dev/null
+    /bin/mount -o remount,rw / > /dev/null 
+    /bin/mkdir -p /dev/pts > /dev/null
+    /bin/mount -t devpts devpts /dev/pts > /dev/null
+    /bin/mkdir -p /dev/shm > /dev/null
+    /bin/mount -t tmpfs tmpfs /dev/shm > /dev/null
+    /bin/mount -t tmpfs tmpfs /tmp > /dev/null
+    /sbin/swapon -a > /dev/null
+    echo 'Setting sysctl'
+    /sbin/sysctl -p /etc/sysctl.conf > /dev/null
+
+    echo 'Setting hostname : '`cat /etc/hostname`
+    /bin/hostname -F /etc/hostname
+    #echo 'Setting up loopback device'
+    #/sbin/ifconfig lo 127.0.0.1 up
+    #/sbin/route add -net 127.0.0.0 netmask 255.0.0.0 lo
+
+    /bin/mkdir -p /var/run/dbus > /dev/null
+    rm -f /var/run/dbus/* > /dev/null
+    rm -f /var/run/messagebus.pid > /dev/null
+    rm -f /var/run/avahi-daemon/* > /dev/null
+    
+    /bin/mkdir -p /var/run/pulse > /dev/null
+    chown pulse:pulse /var/run/pulse
+
+    ;;
+	stop)
+		;;
+	*)
+		echo "Usage: urandom {start|stop}" >&2
+		exit 1
+		;;
+esac
