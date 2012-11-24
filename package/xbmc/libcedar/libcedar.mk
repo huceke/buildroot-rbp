@@ -3,7 +3,7 @@
 # libcedar
 #
 #############################################################
-LIBCEDAR_VERSION = d12173fe550cd7b3e8052d6161731b7b9bdc4fa5
+LIBCEDAR_VERSION = 3ce8aa1fe9319fedf1b5b0447175611d27967f90
 LIBCEDAR_SITE = git://github.com/huceke/libcedar.git
 LIBCEDAR_INSTALL_STAGING = YES
 LIBCEDAR_INSTALL_TARGET = YES
