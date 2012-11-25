@@ -3,7 +3,7 @@
 # libcedar
 #
 #############################################################
-LIBCEDAR_VERSION = 3ce8aa1fe9319fedf1b5b0447175611d27967f90
+LIBCEDAR_VERSION = bd6769965917f5c83a066536676c1b11c45b3532
 LIBCEDAR_SITE = git://github.com/huceke/libcedar.git
 LIBCEDAR_INSTALL_STAGING = YES
 LIBCEDAR_INSTALL_TARGET = YES
@@ -20,7 +20,7 @@ define LIBCEDAR_INSTALL_TARGET_CMDS
 endef
 
 define LIBCEDAR_BUILD_CMDS
-	cd $(@D); ls -l; \
+	cd $(@D); \
 		sed -e "s/include/#include/g" -i Makefile; \
 		$(MAKE) CC="$(TARGET_CC)" CXX="$(TARGET_CXX)" CFLAGS="-fPIC -pipe -mcpu=cortex-a8 -mtune=cortex-a8 -mfpu=neon -mfloat-abi=hard -O3 -fomit-frame-pointer -mabi=aapcs-linux -Wno-psabi -mno-apcs-stack-check -mstructure-size-boundary=32 -mno-sched-prolog -DCEDAR_LIBRARY -DHAVE_LIBCEDAR -DOS_LINUX"
 endef
