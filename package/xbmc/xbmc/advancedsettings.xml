@@ -5,20 +5,14 @@
     <nofliptimeout>0</nofliptimeout>
     <visualizedirtyregions>off</visualizedirtyregions>
   </gui>
-<!--
-  <gui>    
-    <bufferxbtinmemory>1</bufferxbtinmemory>
-  </gui>
--->
   <omx>
 <!--
     <omxhwaudiodecode>1</omxhwaudiodecode>
     <omxdecodestartwithvalidframe>1</omxdecodestartwithvalidframe>
 -->
   </omx>
-  <destroywindowcontrols>false</destroywindowcontrols>
   <network> 
-    <cachemembuffersize>30242880</cachemembuffersize> 
+    <cachemembuffersize>2000000</cachemembuffersize> 
   </network>
   <fanartres>512</fanartres>
   <imageres>256</imageres>
