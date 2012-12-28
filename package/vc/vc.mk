@@ -36,6 +36,7 @@ define VC_INSTALL_TARGET_CMDS
 	cp package/vc/cmdline.txt.example $(BINARIES_DIR)/
 	install -d -m 755 $(TARGET_DIR)/etc/init.d
 	install -m 755 package/vc/S99vcfield $(TARGET_DIR)/etc/init.d/
+	cd $(TARGET_DIR)/lib; rm -f ld-linux-armhf.so.3; ln -s ld-2.13.so ld-linux-armhf.so.3
 endef
 
 define VC_ADD_VC_LIB_PATH
