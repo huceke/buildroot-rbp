@@ -4,7 +4,7 @@
 #
 #################################################################################
 
-VC_VERSION = de687862fa8365ad70c945cac9c5b1f262c4e544
+VC_VERSION = 57b604530d3c86edd5093d2a58c9d026fdfa7a7a
 VC_SITE_METHOD = git
 VC_SITE = git://github.com/raspberrypi/firmware.git
 VC_INSTALL_STAGING = YES
