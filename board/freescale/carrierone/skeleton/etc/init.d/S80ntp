@@ -1,0 +1,20 @@
+#!/bin/sh
+
+case "$1" in
+	start)
+		echo 'Starting ntpd'
+   	ntpd -p pool.ntp.org
+		;;
+	stop)
+		echo 'Stopping ntpd'
+		pkill ntpd
+		;;
+	restart)
+		$0 stop
+		sleep 1
+		$0 start
+		;;
+	*)
+		echo "usage: $0 {start|stop|restart}"
+esac
+exit 0

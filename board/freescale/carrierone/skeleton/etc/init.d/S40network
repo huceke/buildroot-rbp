@@ -1,0 +1,32 @@
+#!/bin/sh
+#
+# Start the network....
+#
+
+# exit on nfs mount
+grep nfs /proc/cmdline > /dev/null
+if [ -z $? ];
+then
+  exit 0
+fi
+
+case "$1" in
+  start)
+ 	echo "Starting network..."
+	/sbin/ifup -a
+	;;
+  stop)
+	echo -n "Stopping network..."
+	/sbin/ifdown -a
+	;;
+  restart|reload)
+	"$0" stop
+	"$0" start
+	;;
+  *)
+	echo $"Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?
+

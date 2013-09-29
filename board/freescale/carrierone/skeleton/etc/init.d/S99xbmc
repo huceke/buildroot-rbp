@@ -1,0 +1,45 @@
+#!/bin/sh
+
+modprobe ump
+modprobe mali
+modprobe cfbfillrect
+modprobe cfbimgblt
+modprobe cfbcopyarea
+modprobe disp
+modprobe lcd
+modprobe hdmi
+
+exit 0
+
+#export XBMC_BASE=/opt/xbmc
+#export XBMC_HOME=/opt/xbmc/share/xbmc
+#export PATH=$PATH:/opt/xbmc/bin
+export HOME=/root
+
+XRES=1920
+YRES=1080
+
+export LD_LIBRARY_PATH=$XBMC_BASE/lib:/opt/vc/lib:$LD_LIBRARY_PATH
+
+case "$1" in
+	start)
+		echo 'Starting xbmc'
+    echo 0 >  /sys/class/vtconsole/vtcon1/bind
+    fbset -xres 1 -yres 1 -vxres 1 -vyres 1
+    /usr/lib/xbmc/xbmc.bin -standalone -fs &
+		;;
+	stop)
+		echo 'Stopping xbmc'
+    pkill xbmc.bin
+    #fbset -xres ${XRES} -yres ${YRES}
+    #echo 1 >  /sys/class/vtconsole/vtcon1/bind
+		;;
+	restart)
+		$0 stop
+		sleep 1
+		$0 start
+		;;
+	*)
+		echo "usage: $0 {start|stop|restart}"
+esac
+exit 0
