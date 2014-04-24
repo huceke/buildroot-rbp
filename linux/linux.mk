@@ -69,6 +69,9 @@ else ifeq ($(BR2_LINUX_KERNEL_VMLINUZ),y)
 LINUX_IMAGE_NAME=vmlinuz
 else ifeq ($(BR2_LINUX_KERNEL_RBP),y)
 LINUX_IMAGE_NAME=Image
+else ifeq ($(BR2_LINUX_KERNEL_CARRIERONE),y)
+LINUX_IMAGE_NAME=zImage
+LINUX_ADDITIONAL_ARGS=imx6q-cubox-i.dtb imx6dl-cubox-i.dtb imx6dl-hummingboard.dtb
 endif
 endif
 
@@ -172,7 +175,7 @@ endef
 # Compilation. We make sure the kernel gets rebuilt when the
 # configuration has changed.
 define LINUX_BUILD_CMDS
-	$(TARGET_MAKE_ENV) $(MAKE) $(LINUX_MAKE_FLAGS) -C $(@D) $(LINUX_IMAGE_NAME)
+	$(TARGET_MAKE_ENV) $(MAKE) $(LINUX_MAKE_FLAGS) -C $(@D) $(LINUX_IMAGE_NAME) $(LINUX_ADDITIONAL_ARGS)
 	@if grep -q "CONFIG_MODULES=y" $(@D)/.config; then 	\
 		$(TARGET_MAKE_ENV) $(MAKE) $(LINUX_MAKE_FLAGS) -C $(@D) modules ;	\
 	fi
@@ -193,6 +196,14 @@ define LINUX_INSTALL_IMAGES_CMDS
 		boot/mkimage/boot-uncompressed.txt \
 		boot/mkimage/args-uncompressed.txt \
 		$(LINUX_IMAGE_PATH) $(BINARIES_DIR)/kernel.img
+endef
+else ifeq ($(BR2_LINUX_KERNEL_CARRIERONE),y)
+define LINUX_INSTALL_IMAGES_CMDS
+	cp $(LINUX_IMAGE_PATH) $(BINARIES_DIR)
+	cp $(KERNEL_ARCH_PATH)/boot/dts/imx6q-cubox-i.dtb \
+		$(KERNEL_ARCH_PATH)/boot/dts/imx6dl-cubox-i.dtb \
+		$(KERNEL_ARCH_PATH)/boot/dts/imx6dl-hummingboard.dtb \
+		$(BINARIES_DIR)
 endef
 else
 define LINUX_INSTALL_IMAGES_CMDS

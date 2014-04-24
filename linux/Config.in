@@ -143,6 +143,10 @@ config BR2_LINUX_KERNEL_RBP
 	bool "RBP"
 	depends on BR2_arm || BR2_armeb 
 
+config BR2_LINUX_KERNEL_CARRIERONE
+	bool "CARRIERONE"
+	depends on BR2_arm || BR2_armeb
+
 config BR2_LINUX_KERNEL_UIMAGE
 	bool "uImage"
 	depends on BR2_arm || BR2_armeb || BR2_bfin || BR2_powerpc || BR2_avr32 || BR2_sh || BR2_sh64

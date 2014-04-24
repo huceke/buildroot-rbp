@@ -1,13 +1,8 @@
 #!/bin/sh
 
-modprobe ump
-modprobe mali
 modprobe cfbfillrect
 modprobe cfbimgblt
 modprobe cfbcopyarea
-modprobe disp
-modprobe lcd
-modprobe hdmi
 
 exit 0
 

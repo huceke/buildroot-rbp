@@ -1,0 +1,18 @@
+create a sdcard with 2 partitions:
+ Partition 1: FAT32, ~150MB, (FSLABEL: System)
+ Partition 2: ext3/4, rest, (FSLABEL: Storage) 
+
+ copy from output/images/ the following files to the first partition:
+   u-boot.img, *.dtb and zImage
+
+ create a uEnv.txt file.
+
+ sample uEnv.txt for nfsroot :
+zImage=/zImage
+bootfile=/zImage
+mmcargs=setenv bootargs 'boot=/dev/mmcblk0p1 disk=/dev/mmcblk0p2 debugging video=mxcfb0:dev=hdmi,1920x1080M@60,if=RGB24,bpp=32 dmfc=3 console=ttymxc0,115200 nfsroot=192.168.1.1:/media/usbdisk/xbmc/xbmc-cubox-new/rootfs,nfsvers=3 ip=192.168.1.2:192.168.1.1:192.168.1.1:255.255.255.0'
+
+ write the bootloader to the sdcard:
+   sudo dd if=output/images/SPL of=/dev/sdX bs=1K seek=1
+   sudo dd if=output/images/u-boot.img of=/dev/sdX bs=1K seek=42
+   sudo dd if=/dev/zero of=/dev/sdX bs=8192 seek=48 if=/dev/zero count=1
