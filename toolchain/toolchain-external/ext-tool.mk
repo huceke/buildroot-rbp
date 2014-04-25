@@ -172,6 +172,14 @@ TOOLCHAIN_EXTERNAL_CFLAGS += -mfpu=vfp
 TOOLCHAIN_EXTERNAL_WRAPPER_ARGS += -DBR_VFPFLOAT=1
 endif
 
+# The Linaro ARMhf toolchain expects the libraries in
+# {/usr,}/lib/arm-linux-gnueabihf, but Buildroot copies them to
+# {/usr,}/lib, so we need to create a symbolic link.
+define TOOLCHAIN_EXTERNAL_LINARO_ARMHF_SYMLINK
+  ln -sf . $(TARGET_DIR)/lib/arm-linux-gnueabihf
+  ln -sf . $(TARGET_DIR)/usr/lib/arm-linux-gnueabihf
+endef
+
 ifeq ($(BR2_TOOLCHAIN_EXTERNAL_DOWNLOAD),y)
 TOOLCHAIN_EXTERNAL_DEPENDENCIES = $(TOOLCHAIN_EXTERNAL_DIR)/.extracted
 endif
@@ -206,6 +214,7 @@ TOOLCHAIN_EXTERNAL_SOURCE=gcc-linaro-arm-linux-gnueabi-2012.04-20120426_linux.ta
 else ifeq ($(BR2_TOOLCHAIN_EXTERNAL_LINARO_2012_10),y)
 TOOLCHAIN_EXTERNAL_SITE=https://launchpad.net/linaro-toolchain-binaries/trunk/2012.10/+download/
 TOOLCHAIN_EXTERNAL_SOURCE=gcc-linaro-arm-linux-gnueabihf-4.7-2012.10-20121022_linux.tar.bz2
+TOOLCHAIN_EXTERNAL_POST_INSTALL_STAGING_HOOKS+=TOOLCHAIN_EXTERNAL_LINARO_ARMHF_SYMLINK
 else ifeq ($(BR2_TOOLCHAIN_EXTERNAL_CODESOURCERY_MIPS44),y)
 TOOLCHAIN_EXTERNAL_SITE=http://sourcery.mentor.com/sgpp/lite/mips/portal/package7401/public/mips-linux-gnu/
 TOOLCHAIN_EXTERNAL_SOURCE=mips-4.4-303-mips-linux-gnu-i686-pc-linux-gnu.tar.bz2
@@ -405,6 +414,19 @@ $(STAMP_DIR)/ext-toolchain-installed: $(STAMP_DIR)/ext-toolchain-checked
 			$(call copy_toolchain_lib_root,$${ARCH_SYSROOT_DIR},$${SUPPORT_LIB_DIR},$${ARCH_LIB_DIR},$$libs,/usr/lib); \
 		done ; \
 	fi ; \
+  for d in $(call qstrip,$(BR2_EXT_TOOL_DIRS_EXTRA)); do \
+    if [ -d "/$${d}" ]; then \
+      mkdir -p "$(TARGET_DIR)$${d}"; \
+      echo "Copying extra directory '$${d}' to target from toolchain"; \
+      cp -a "/$${d}/" "$(TARGET_DIR)$${d}/../"; \
+    else \
+      echo "No such directory '$${d}' while trying to copy from toolchain"; \
+    fi; \
+  done; \
+  if test "$(BR2_TOOLCHAIN_EXTERNAL_LINARO_GCONV)" = "y" ; then \
+      echo "Copying external toolchain gconv to target..." ; \
+      $(call copy_toolchain_gconv,$${SYSROOT_DIR},$(BR2_TOOLCHAIN_EXTERNAL_PREFIX)) ; \
+  fi ; \
 	echo "Copy external toolchain sysroot to staging..." ; \
 	$(call copy_toolchain_sysroot,$${SYSROOT_DIR},$${ARCH_SYSROOT_DIR},$${ARCH_SUBDIR},$${ARCH_LIB_DIR},$${SUPPORT_LIB_DIR}) ; \
 	if [ -L $${ARCH_SYSROOT_DIR}/lib64 ] ; then \
